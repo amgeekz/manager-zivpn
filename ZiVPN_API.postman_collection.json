@@ -1,0 +1,257 @@
+{
+  "info": {
+    "_postman_id": "c1f3b76e-4bcd-4174-9c02-f42f31b7e91f",
+    "name": "ZiVPN UDP API (Upgraded)",
+    "description": "Upgraded collection with improved tests, variables, auto-backup ID, and grouped endpoints for ZiVPN UDP API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "api_key",
+      "value": "YOUR_API_KEY_HERE"
+    },
+    {
+      "key": "last_backup_id",
+      "value": ""
+    }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "X-API-Key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{api_key}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "📊 System Info",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code is 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"Response JSON valid\", () => pm.response.to.be.json);",
+              "const data = pm.response.json();",
+              "pm.test(\"success = true\", () => pm.expect(data.success).to.be.true);",
+              "pm.test(\"Domain key exists\", () => pm.expect(data.data.domain).to.not.be.undefined);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/info",
+          "host": ["{{base_url}}"],
+          "path": ["api", "info"]
+        }
+      }
+    },
+    {
+      "name": "👥 User Management",
+      "item": [
+        {
+          "name": "List Users",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"success\", () => pm.expect(pm.response.json().success).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/users",
+              "host": ["{{base_url}}"],
+              "path": ["api", "users"]
+            }
+          }
+        },
+        {
+          "name": "Create User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"user123\",\n  \"days\": 30\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/user/create",
+              "host": ["{{base_url}}"],
+              "path": ["api", "user", "create"]
+            }
+          }
+        },
+        {
+          "name": "Renew User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"user123\",\n  \"days\": 30\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/user/renew",
+              "host": ["{{base_url}}"],
+              "path": ["api", "user", "renew"]
+            }
+          }
+        },
+        {
+          "name": "Delete User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"user123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/user/delete",
+              "host": ["{{base_url}}"],
+              "path": ["api", "user", "delete"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "💾 Backup Management",
+      "item": [
+        {
+          "name": "Create Backup",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Backup created\", () => pm.response.to.have.status(200));",
+                  "const res = pm.response.json();",
+                  "pm.environment.set(\"last_backup_id\", res.data.backup_id);",
+                  "console.log(\"Saved backup_id:\", res.data.backup_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/backup",
+              "host": ["{{base_url}}"],
+              "path": ["api", "backup"]
+            }
+          }
+        },
+        {
+          "name": "List Backups",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/backup/list",
+              "host": ["{{base_url}}"],
+              "path": ["api", "backup", "list"]
+            }
+          }
+        },
+        {
+          "name": "Restore Backup (Auto-use last ID)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const id = pm.environment.get(\"last_backup_id\");",
+                  "if (!id) { console.warn(\"Backup ID empty!\"); }",
+                  "pm.variables.set(\"restore_id\", id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"backup_id\": \"{{restore_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/restore",
+              "host": ["{{base_url}}"],
+              "path": ["api", "restore"]
+            }
+          }
+        },
+        {
+          "name": "Toggle Auto Backup",
+          "request": {
+            "method": "POST",
+            "body": { "mode": "raw", "raw": "{}" },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/backup/auto",
+              "host": ["{{base_url}}"],
+              "path": ["api", "backup", "auto"]
+            }
+          }
+        },
+        {
+          "name": "Cleanup Old Backups",
+          "request": {
+            "method": "POST",
+            "body": { "mode": "raw", "raw": "{}" },
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/backup/cleanup",
+              "host": ["{{base_url}}"],
+              "path": ["api", "backup", "cleanup"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
