@@ -576,10 +576,8 @@ func appendToFile(path, content string) error {
 }
 
 func restartAll() error {
-	_ = exec.Command("systemctl", "restart", "zivpn").Run()
-	_ = exec.Command("systemctl", "restart", "zivpn-api").Run()
-	_ = exec.Command("systemctl", "restart", "zivpn-bot").Run()
-	return nil
+    _ = exec.Command("systemctl", "restart", "zivpn").Run()
+    return nil
 }
 
 func createZip(dest string, paths []string) error {
