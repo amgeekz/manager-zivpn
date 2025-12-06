@@ -19,7 +19,7 @@
 Jalankan perintah berikut di terminal VPS Anda (sebagai root):
 
 ```bash
-wget -q https://raw.githubusercontent.com/amgeekz/manager-zivpn/main/zivpn-install && chmod +x install && ./install
+wget -q https://raw.githubusercontent.com/amgeekz/manager-zivpn/main/zivpn-install && chmod +x zivpn-install && ./zivpn-install
 ```
 
 ### Konfigurasi Saat Instalasi
