@@ -345,7 +345,8 @@ func handleBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := generateBackupID()
-	filename := fmt.Sprintf("%s.zip", id)
+
+	filename := fmt.Sprintf("%s-%s.zip", strings.ReplaceAll(domain, ".", "-"), id)
 	tempFile := filepath.Join(BackupDir, filename)
 
 	files := []string{
@@ -363,14 +364,12 @@ func handleBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// upload
 	if out, err := exec.Command("rclone", "copy", tempFile, RcloneRemote).CombinedOutput(); err != nil {
 		_ = os.Remove(tempFile)
 		jsonResponse(w, http.StatusInternalServerError, false, "Rclone upload failed: "+string(out), nil)
 		return
 	}
 
-	// remove local
 	_ = os.Remove(tempFile)
 
 	jsonResponse(w, http.StatusOK, true, "Backup success", map[string]string{
