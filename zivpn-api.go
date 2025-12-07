@@ -1,4 +1,3 @@
-// /etc/zivpn/api/zivpn-api.go
 package main
 
 import (
@@ -8,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,17 +15,17 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"math/rand"
 )
 
 const (
-	ConfigFile   = "/etc/zivpn/config.json"
-	UserDB       = "/etc/zivpn/users.db"
-	DomainFile   = "/etc/zivpn/domain"
-	ApiKeyFile   = "/etc/zivpn/apikey"
-	BackupDir    = "/etc/zivpn/backups"
-	RcloneRemote = "drive:ZIVPN-BACKUP" // remote:path
-	Port         = ":8080"
+	ConfigFile     = "/etc/zivpn/config.json"
+	UserDB         = "/etc/zivpn/users.db"
+	DomainFile     = "/etc/zivpn/domain"
+	ApiKeyFile     = "/etc/zivpn/apikey"
+	BackupDir      = "/etc/zivpn/backups"
+	RcloneRemote   = "drive:ZIVPN-BACKUP"
+	Port           = ":8080"
+	AutoBackupFile = "/etc/zivpn/backup_auto.json"
 )
 
 var (
@@ -34,7 +34,6 @@ var (
 	backupMutex = &sync.Mutex{}
 )
 
-// Structs
 type Config struct {
 	Listen string `json:"listen"`
 	Cert   string `json:"cert"`
@@ -55,60 +54,15 @@ type BackupRequest struct {
 	BackupID string `json:"backup_id"`
 }
 
-type BackupInfo struct {
-	ID       string `json:"id"`
-	Filename string `json:"filename"`
-	Date     string `json:"date"`
-	Domain   string `json:"domain"`
-	Size     int64  `json:"size"`
+type AutoBackupCfg struct {
+	Enabled  bool   `json:"enabled"`
+	Schedule string `json:"schedule"`
 }
 
 type Response struct {
 	Success bool        `json:"success"`
 	Message string      `json:"message"`
 	Data    interface{} `json:"data,omitempty"`
-}
-
-// main
-func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-
-	// load api key if available
-	if keyBytes, err := ioutil.ReadFile(ApiKeyFile); err == nil {
-		AuthToken = strings.TrimSpace(string(keyBytes))
-	} else {
-		log.Printf("Warning: apikey file not found: %v", err)
-	}
-
-	if err := os.MkdirAll(BackupDir, 0755); err != nil {
-		log.Fatalf("Unable to create backup dir: %v", err)
-	}
-
-	http.HandleFunc("/api/user/create", authMiddleware(createUser))
-	http.HandleFunc("/api/user/delete", authMiddleware(deleteUser))
-	http.HandleFunc("/api/user/renew", authMiddleware(renewUser))
-	http.HandleFunc("/api/users", authMiddleware(listUsers))
-	http.HandleFunc("/api/info", authMiddleware(getSystemInfo))
-	http.HandleFunc("/api/backup", authMiddleware(handleBackup))
-	http.HandleFunc("/api/backup/list", authMiddleware(listBackups))
-	http.HandleFunc("/api/restore", authMiddleware(handleRestore))
-	http.HandleFunc("/api/backup/cleanup", authMiddleware(cleanupOldBackups))
-
-	log.Printf("ZiVPN API listening on %s", Port)
-	log.Fatal(http.ListenAndServe(Port, nil))
-}
-
-// middleware & helpers
-func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if AuthToken != "" {
-			if r.Header.Get("X-API-Key") != AuthToken {
-				jsonResponse(w, http.StatusUnauthorized, false, "Unauthorized", nil)
-				return
-			}
-		} // if AuthToken empty => allow (useful for local testing)
-		next(w, r)
-	}
 }
 
 func jsonResponse(w http.ResponseWriter, status int, success bool, message string, data interface{}) {
@@ -118,428 +72,27 @@ func jsonResponse(w http.ResponseWriter, status int, success bool, message strin
 }
 
 func generateBackupID() string {
-	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	const c = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	b := make([]byte, 12)
 	for i := range b {
-		b[i] = charset[r.Intn(len(charset))]
+		b[i] = c[r.Intn(len(c))]
 	}
 	return string(b)
 }
 
-// users
-func createUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
-		return
-	}
-	var req UserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonResponse(w, http.StatusBadRequest, false, "Invalid request body", nil)
-		return
-	}
-	if req.Password == "" || req.Days <= 0 {
-		jsonResponse(w, http.StatusBadRequest, false, "Password dan days harus valid", nil)
-		return
-	}
-
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	cfg, err := loadConfig()
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed reading config", nil)
-		return
-	}
-	for _, u := range cfg.Auth.Config {
-		if u == req.Password {
-			jsonResponse(w, http.StatusConflict, false, "User already exists", nil)
-			return
-		}
-	}
-
-	cfg.Auth.Config = append(cfg.Auth.Config, req.Password)
-	if err := saveConfig(cfg); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed saving config", nil)
-		return
-	}
-
-	exp := time.Now().Add(time.Duration(req.Days) * 24 * time.Hour).Format("2006-01-02")
-	entry := fmt.Sprintf("%s | %s\n", req.Password, exp)
-	if err := appendToFile(UserDB, entry); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed write userdb", nil)
-		return
-	}
-
-	_ = restartAll()
-
-	jsonResponse(w, http.StatusOK, true, "User created", map[string]string{
-		"password": req.Password,
-		"expired":  exp,
-	})
-}
-
-func deleteUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
-		return
-	}
-	var req UserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonResponse(w, http.StatusBadRequest, false, "Invalid request body", nil)
-		return
-	}
-
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	cfg, err := loadConfig()
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed reading config", nil)
-		return
-	}
-
-	var newAuth []string
-	found := false
-	for _, u := range cfg.Auth.Config {
-		if u == req.Password {
-			found = true
-		} else {
-			newAuth = append(newAuth, u)
-		}
-	}
-	if !found {
-		jsonResponse(w, http.StatusNotFound, false, "User not found", nil)
-		return
-	}
-	cfg.Auth.Config = newAuth
-	if err := saveConfig(cfg); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed saving config", nil)
-		return
-	}
-
-	users, _ := loadUsers()
-	var newUsers []string
-	for _, line := range users {
-		parts := strings.Split(line, "|")
-		if len(parts) > 0 && strings.TrimSpace(parts[0]) == req.Password {
-			continue
-		}
-		newUsers = append(newUsers, line)
-	}
-	if err := saveUsers(newUsers); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed saving users", nil)
-		return
-	}
-
-	_ = restartAll()
-	jsonResponse(w, http.StatusOK, true, "User deleted", nil)
-}
-
-func renewUser(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
-		return
-	}
-	var req UserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonResponse(w, http.StatusBadRequest, false, "Invalid request body", nil)
-		return
-	}
-	if req.Password == "" || req.Days <= 0 {
-		jsonResponse(w, http.StatusBadRequest, false, "Invalid params", nil)
-		return
-	}
-
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	users, _ := loadUsers()
-	found := false
-	var newUsers []string
-	for _, line := range users {
-		parts := strings.Split(line, "|")
-		if len(parts) < 2 {
-			continue
-		}
-		pass := strings.TrimSpace(parts[0])
-		expStr := strings.TrimSpace(parts[1])
-		if pass == req.Password {
-			found = true
-			old, err := time.Parse("2006-01-02", expStr)
-			if err != nil || old.Before(time.Now()) {
-				old = time.Now()
-			}
-			newExp := old.Add(time.Duration(req.Days) * 24 * time.Hour).Format("2006-01-02")
-			newUsers = append(newUsers, fmt.Sprintf("%s | %s", pass, newExp))
-		} else {
-			newUsers = append(newUsers, line)
-		}
-	}
-	if !found {
-		jsonResponse(w, http.StatusNotFound, false, "User not found", nil)
-		return
-	}
-	if err := saveUsers(newUsers); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed saving users", nil)
-		return
-	}
-
-	_ = restartAll()
-	jsonResponse(w, http.StatusOK, true, "User renewed", nil)
-}
-
-func listUsers(w http.ResponseWriter, r *http.Request) {
-	users, _ := loadUsers()
-	type U struct {
-		Password string `json:"password"`
-		Expired  string `json:"expired"`
-		Status   string `json:"status"`
-	}
-	var out []U
-	today := time.Now().Format("2006-01-02")
-	for _, line := range users {
-		parts := strings.Split(line, "|")
-		if len(parts) < 2 {
-			continue
-		}
-		p := strings.TrimSpace(parts[0])
-		e := strings.TrimSpace(parts[1])
-		status := "Active"
-		if e < today {
-			status = "Expired"
-		}
-		out = append(out, U{Password: p, Expired: e, Status: status})
-	}
-	jsonResponse(w, http.StatusOK, true, "OK", out)
-}
-
-func getSystemInfo(w http.ResponseWriter, r *http.Request) {
-	ipPub, _ := exec.Command("curl", "-s", "ifconfig.me").Output()
-	ipPriv, _ := exec.Command("hostname", "-I").Output()
-	domain := "Unknown"
-	if b, err := ioutil.ReadFile(DomainFile); err == nil {
-		domain = strings.TrimSpace(string(b))
-	}
-	info := map[string]interface{}{
-		"public_ip":  strings.TrimSpace(string(ipPub)),
-		"private_ip": func() string { f := strings.Fields(string(ipPriv)); if len(f) > 0 { return f[0] }; return "" }(),
-		"domain":     domain,
-	}
-	jsonResponse(w, http.StatusOK, true, "OK", info)
-}
-
-// backup & restore
-func handleBackup(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
-		return
-	}
-
-	backupMutex.Lock()
-	defer backupMutex.Unlock()
-
-	domain := "unknown"
-	if b, err := ioutil.ReadFile(DomainFile); err == nil {
-		domain = strings.TrimSpace(string(b))
-	}
-
-	id := generateBackupID()
-
-	filename := fmt.Sprintf("%s-%s.zip", strings.ReplaceAll(domain, ".", "-"), id)
-	tempFile := filepath.Join(BackupDir, filename)
-
-	files := []string{
-		ConfigFile,
-		UserDB,
-		DomainFile,
-		ApiKeyFile,
-		"/etc/zivpn/bot-config.json",
-		"/etc/zivpn/zivpn.crt",
-		"/etc/zivpn/zivpn.key",
-	}
-
-	if err := createZip(tempFile, files); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed creating zip: "+err.Error(), nil)
-		return
-	}
-
-	if out, err := exec.Command("rclone", "copy", tempFile, RcloneRemote).CombinedOutput(); err != nil {
-		_ = os.Remove(tempFile)
-		jsonResponse(w, http.StatusInternalServerError, false, "Rclone upload failed: "+string(out), nil)
-		return
-	}
-
-	_ = os.Remove(tempFile)
-
-	jsonResponse(w, http.StatusOK, true, "Backup success", map[string]string{
-		"backup_id": id,
-		"filename":  filename,
-	})
-}
-
-func handleRestore(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
-		return
-	}
-	var req BackupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonResponse(w, http.StatusBadRequest, false, "Invalid request body", nil)
-		return
-	}
-	if req.BackupID == "" {
-		jsonResponse(w, http.StatusBadRequest, false, "Missing backup ID", nil)
-		return
-	}
-
-	temp := filepath.Join("/tmp", req.BackupID+".zip")
-	// copy from rclone remote to /tmp
-	if out, err := exec.Command("rclone", "copy", RcloneRemote+"/"+req.BackupID+".zip", "/tmp/").CombinedOutput(); err != nil {
-		_ = os.Remove(temp)
-		jsonResponse(w, http.StatusInternalServerError, false, "Rclone copy failed: "+string(out), nil)
-		return
-	}
-
-	zr, err := zip.OpenReader(temp)
-	if err != nil {
-		_ = os.Remove(temp)
-		jsonResponse(w, http.StatusInternalServerError, false, "Failed open zip: "+err.Error(), nil)
-		return
-	}
-	defer zr.Close()
-
-	for _, f := range zr.File {
-		dstPath := filepath.Join("/etc/zivpn", f.Name)
-		if f.FileInfo().IsDir() {
-			_ = os.MkdirAll(dstPath, f.Mode())
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
-			log.Printf("mkdir fail: %v", err)
-			continue
-		}
-		rc, err := f.Open()
-		if err != nil {
-			log.Printf("open inside zip fail: %v", err)
-			continue
-		}
-		outf, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
-		if err != nil {
-			rc.Close()
-			log.Printf("create file fail: %v", err)
-			continue
-		}
-		_, _ = io.Copy(outf, rc)
-		outf.Close()
-		rc.Close()
-	}
-	_ = os.Remove(temp)
-	_ = restartAll()
-	jsonResponse(w, http.StatusOK, true, "Restore done", nil)
-}
-
-func listBackups(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
-		return
-	}
-	out, err := exec.Command("rclone", "lsjson", RcloneRemote).Output()
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Rclone lsjson failed: "+err.Error(), nil)
-		return
-	}
-	var files []map[string]interface{}
-	if err := json.Unmarshal(out, &files); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Invalid rclone output: "+err.Error(), nil)
-		return
-	}
-	var res []map[string]interface{}
-	for _, it := range files {
-		nameRaw, ok := it["Name"]
-		if !ok {
-			continue
-		}
-		name, ok := nameRaw.(string)
-		if !ok {
-			continue
-		}
-		if strings.HasSuffix(name, ".zip") {
-			id := strings.TrimSuffix(name, ".zip")
-			res = append(res, map[string]interface{}{
-				"id":       id,
-				"filename": name,
-				"size":     it["Size"],
-			})
-		}
-	}
-	jsonResponse(w, http.StatusOK, true, "OK", res)
-}
-
-func cleanupOldBackups(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonResponse(w, http.StatusMethodNotAllowed, false, "Method not allowed", nil)
-		return
-	}
-	out, err := exec.Command("rclone", "lsjson", RcloneRemote).Output()
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Rclone lsjson failed: "+err.Error(), nil)
-		return
-	}
-	var files []map[string]interface{}
-	if err := json.Unmarshal(out, &files); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, false, "Invalid rclone output: "+err.Error(), nil)
-		return
-	}
-	now := time.Now()
-	deleted := 0
-	for _, it := range files {
-		nameRaw, ok := it["Name"]
-		if !ok {
-			continue
-		}
-		name, ok := nameRaw.(string)
-		if !ok || !strings.HasSuffix(name, ".zip") {
-			continue
-		}
-		modRaw, ok := it["ModTime"]
-		if !ok {
-			continue
-		}
-		modStr, ok := modRaw.(string)
-		if !ok {
-			continue
-		}
-		tm, err := time.Parse(time.RFC3339, modStr)
-		if err != nil {
-			continue
-		}
-		if now.Sub(tm).Hours() > 24*7 {
-			_ = exec.Command("rclone", "delete", RcloneRemote+"/"+name).Run()
-			deleted++
-		}
-	}
-	jsonResponse(w, http.StatusOK, true, "Cleanup OK", map[string]int{"deleted": deleted})
-}
-
-// file helpers
 func loadConfig() (Config, error) {
 	var cfg Config
 	b, err := ioutil.ReadFile(ConfigFile)
 	if err != nil {
 		return cfg, err
 	}
-	if err := json.Unmarshal(b, &cfg); err != nil {
-		return cfg, err
-	}
+	_ = json.Unmarshal(b, &cfg)
 	return cfg, nil
 }
 
 func saveConfig(cfg Config) error {
-	b, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return err
-	}
+	b, _ := json.MarshalIndent(cfg, "", "  ")
 	return ioutil.WriteFile(ConfigFile, b, 0644)
 }
 
@@ -552,7 +105,7 @@ func loadUsers() ([]string, error) {
 		return nil, err
 	}
 	lines := strings.Split(string(b), "\n")
-	var out []string
+	out := []string{}
 	for _, x := range lines {
 		if strings.TrimSpace(x) != "" {
 			out = append(out, x)
@@ -575,53 +128,458 @@ func appendToFile(path, content string) error {
 	return err
 }
 
-func restartAll() error {
-    _ = exec.Command("systemctl", "restart", "zivpn").Run()
-    return nil
+func restartAll() {
+    go func() {
+        cmd := exec.Command("systemctl", "restart", "zivpn.service")
+        cmd.Stdout = io.Discard
+        cmd.Stderr = io.Discard
+        _ = cmd.Run()
+    }()
 }
 
-func createZip(dest string, paths []string) error {
-	out, err := os.Create(dest)
-	if err != nil {
-		return err
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if AuthToken != "" && r.Header.Get("X-API-Key") != AuthToken {
+			jsonResponse(w, 401, false, "Unauthorized", nil)
+			return
+		}
+		next(w, r)
 	}
-	defer out.Close()
+}
 
-	zw := zip.NewWriter(out)
-	defer zw.Close()
+func createUserHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonResponse(w, 405, false, "Method not allowed", nil)
+		return
+	}
+	var req UserRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Password == "" || req.Days <= 0 {
+		jsonResponse(w, 400, false, "Invalid request", nil)
+		return
+	}
 
-	for _, p := range paths {
-		if stat, err := os.Stat(p); err == nil && !stat.IsDir() {
-			if err := addFileToZip(zw, p, filepath.Base(p)); err != nil {
-				log.Printf("addFileToZip fail: %v", err)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	cfg, err := loadConfig()
+	if err != nil {
+		jsonResponse(w, 500, false, "Read config error", nil)
+		return
+	}
+
+	for _, u := range cfg.Auth.Config {
+		if u == req.Password {
+			jsonResponse(w, 409, false, "User exists", nil)
+			return
+		}
+	}
+
+	cfg.Auth.Config = append(cfg.Auth.Config, req.Password)
+	_ = saveConfig(cfg)
+
+	exp := time.Now().Add(24 * time.Hour * time.Duration(req.Days)).Format("2006-01-02")
+	_ = appendToFile(UserDB, fmt.Sprintf("%s | %s\n", req.Password, exp))
+
+	go restartAll()
+
+	jsonResponse(w, 200, true, "User created", map[string]string{
+		"password": req.Password,
+		"expired":  exp,
+	})
+}
+
+func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
+	var req UserRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Password == "" {
+		jsonResponse(w, 400, false, "Invalid request", nil)
+		return
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	cfg, _ := loadConfig()
+	var newAuth []string
+	found := false
+
+	for _, u := range cfg.Auth.Config {
+		if u == req.Password {
+			found = true
+			continue
+		}
+		newAuth = append(newAuth, u)
+	}
+
+	if !found {
+		jsonResponse(w, 404, false, "User not found", nil)
+		return
+	}
+
+	cfg.Auth.Config = newAuth
+	_ = saveConfig(cfg)
+
+	users, _ := loadUsers()
+	var newUsers []string
+	for _, line := range users {
+		if !strings.HasPrefix(line, req.Password+" ") &&
+			!strings.HasPrefix(line, req.Password+"|") {
+			newUsers = append(newUsers, line)
+		}
+	}
+	_ = saveUsers(newUsers)
+
+	go restartAll()
+	jsonResponse(w, 200, true, "User deleted", nil)
+}
+
+func renewUserHandler(w http.ResponseWriter, r *http.Request) {
+	var req UserRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if req.Password == "" || req.Days <= 0 {
+		jsonResponse(w, 400, false, "Invalid request", nil)
+		return
+	}
+
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	users, _ := loadUsers()
+	found := false
+	var newUsers []string
+
+	for _, line := range users {
+		parts := strings.Split(line, "|")
+		if len(parts) < 2 {
+			newUsers = append(newUsers, line)
+			continue
+		}
+
+		pass := strings.TrimSpace(parts[0])
+		exp := strings.TrimSpace(parts[1])
+
+		if pass == req.Password {
+			found = true
+			old, err := time.Parse("2006-01-02", exp)
+			if err != nil || old.Before(time.Now()) {
+				old = time.Now()
+			}
+			newExp := old.Add(time.Hour * 24 * time.Duration(req.Days)).Format("2006-01-02")
+			newUsers = append(newUsers, fmt.Sprintf("%s | %s", pass, newExp))
+		} else {
+			newUsers = append(newUsers, line)
+		}
+	}
+
+	if !found {
+		jsonResponse(w, 404, false, "User not found", nil)
+		return
+	}
+
+	_ = saveUsers(newUsers)
+	go restartAll()
+	jsonResponse(w, 200, true, "User renewed", nil)
+}
+
+func listUsersHandler(w http.ResponseWriter, r *http.Request) {
+	users, _ := loadUsers()
+	today := time.Now().Format("2006-01-02")
+
+	var out []map[string]string
+	for _, l := range users {
+		parts := strings.Split(l, "|")
+		if len(parts) < 2 {
+			continue
+		}
+		p := strings.TrimSpace(parts[0])
+		e := strings.TrimSpace(parts[1])
+		st := "Active"
+		if e < today {
+			st = "Expired"
+		}
+		out = append(out, map[string]string{
+			"password": p,
+			"expired":  e,
+			"status":   st,
+		})
+	}
+
+	jsonResponse(w, 200, true, "OK", out)
+}
+
+func execOut(s string) string {
+	parts := strings.Fields(s)
+	if len(parts) == 0 {
+		return ""
+	}
+	out, _ := exec.Command(parts[0], parts[1:]...).Output()
+	return strings.TrimSpace(string(out))
+}
+
+func isActive(service string) bool {
+	out, err := exec.Command("systemctl", "is-active", service).Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "active"
+}
+
+func getSystemInfoHandler(w http.ResponseWriter, r *http.Request) {
+	pub := execOut("curl -s ifconfig.me")
+	privSplit := strings.Fields(execOut("hostname -I"))
+	priv := ""
+	if len(privSplit) > 0 {
+		priv = privSplit[0]
+	}
+
+	domain := "Unknown"
+	if b, err := ioutil.ReadFile(DomainFile); err == nil {
+		domain = strings.TrimSpace(string(b))
+	}
+
+	osInfo := execOut("uname -a")
+	kernel := execOut("uname -r")
+	cpu := execOut("awk -F: '/model name/ {print $2; exit}' /proc/cpuinfo")
+	if cpu == "" {
+		cpu = execOut("cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d: -f2")
+	}
+	cpu = strings.TrimSpace(cpu)
+
+	cores := execOut("nproc")
+	ram := execOut("free -h | awk '/Mem:/ {print $3 \" / \" $2}'")
+	disk := execOut("df -h / | awk 'NR==2{print $3 \" / \" $2 \" (\" $5 \")\"}'")
+
+	backupCount := 0
+	if out, err := exec.Command("rclone", "lsjson", RcloneRemote).Output(); err == nil {
+		var arr []map[string]interface{}
+		if json.Unmarshal(out, &arr) == nil {
+			for _, x := range arr {
+				if n, ok := x["Name"].(string); ok && strings.HasSuffix(n, ".zip") {
+					backupCount++
+				}
 			}
 		}
 	}
-	return nil
+
+	jsonResponse(w, 200, true, "OK", map[string]interface{}{
+		"public_ip":   pub,
+		"private_ip":  priv,
+		"domain":      domain,
+		"os":          osInfo,
+		"kernel":      kernel,
+		"cpu":         cpu,
+		"cores":       cores,
+		"ram":         ram,
+		"disk":        disk,
+		"port":        "5667 UDP, 8080 API",
+		"service":     map[string]bool{"zivpn": isActive("zivpn"), "api": isActive("zivpn-api"), "bot": isActive("zivpn-bot")},
+		"server_time": time.Now().Format("2006-01-02 15:04:05"),
+		"backup_count": backupCount,
+	})
 }
 
-func addFileToZip(zw *zip.Writer, path, name string) error {
-	f, err := os.Open(path)
+func createZip(dest string, paths []string) error {
+	f, err := os.Create(dest)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	header, err := zip.FileInfoHeader(info)
-	if err != nil {
-		return err
-	}
-	header.Name = name
-	header.Method = zip.Deflate
+	w := zip.NewWriter(f)
+	defer w.Close()
 
-	w, err := zw.CreateHeader(header)
-	if err != nil {
-		return err
+	for _, p := range paths {
+		if s, err := os.Stat(p); err == nil && !s.IsDir() {
+			src, err := os.Open(p)
+			if err != nil {
+				continue
+			}
+			header, _ := zip.FileInfoHeader(s)
+			header.Name = filepath.Base(p)
+			dst, _ := w.CreateHeader(header)
+			io.Copy(dst, src)
+			src.Close()
+		}
 	}
-	_, err = io.Copy(w, f)
-	return err
+	return nil
+}
+
+func handleBackupHandler(w http.ResponseWriter, r *http.Request) {
+	backupMutex.Lock()
+	defer backupMutex.Unlock()
+
+	id := generateBackupID()
+	filename := id + ".zip"
+	temp := filepath.Join(BackupDir, filename)
+
+	files := []string{
+		ConfigFile, UserDB, DomainFile, ApiKeyFile,
+		"/etc/zivpn/bot-config.json",
+		"/etc/zivpn/zivpn.crt",
+		"/etc/zivpn/zivpn.key",
+	}
+
+	_ = createZip(temp, files)
+
+	out, err := exec.Command("rclone", "copy", temp, RcloneRemote).CombinedOutput()
+	if err != nil {
+		jsonResponse(w, 500, false, string(out), nil)
+		return
+	}
+
+	_ = os.Remove(temp)
+
+	jsonResponse(w, 200, true, "Backup success", map[string]string{
+		"backup_id": id,
+		"filename":  filename,
+	})
+}
+
+func listBackupsHandler(w http.ResponseWriter, r *http.Request) {
+	out, err := exec.Command("rclone", "lsjson", RcloneRemote).Output()
+	if err != nil {
+		jsonResponse(w, 500, false, err.Error(), nil)
+		return
+	}
+
+	var arr []map[string]interface{}
+	_ = json.Unmarshal(out, &arr)
+
+	var res []map[string]interface{}
+	for _, x := range arr {
+		n, ok := x["Name"].(string)
+		if ok && strings.HasSuffix(n, ".zip") {
+			res = append(res, map[string]interface{}{
+				"id":       strings.TrimSuffix(n, ".zip"),
+				"filename": n,
+				"size":     x["Size"],
+			})
+		}
+	}
+
+	jsonResponse(w, 200, true, "OK", res)
+}
+
+func restoreHandler(w http.ResponseWriter, r *http.Request) {
+	var req BackupRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if req.BackupID == "" {
+		jsonResponse(w, 400, false, "Invalid backup ID", nil)
+		return
+	}
+
+	temp := "/tmp/" + req.BackupID + ".zip"
+	_, err := exec.Command("rclone", "copy", RcloneRemote+"/"+req.BackupID+".zip", "/tmp/").CombinedOutput()
+	if err != nil {
+		jsonResponse(w, 500, false, "Copy failed", nil)
+		return
+	}
+
+	z, err := zip.OpenReader(temp)
+	if err != nil {
+		jsonResponse(w, 500, false, err.Error(), nil)
+		return
+	}
+	for _, f := range z.File {
+		dst := filepath.Join("/etc/zivpn", f.Name)
+		os.MkdirAll(filepath.Dir(dst), 0755)
+		rc, _ := f.Open()
+		out, _ := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
+		io.Copy(out, rc)
+		out.Close()
+		rc.Close()
+	}
+	z.Close()
+	_ = os.Remove(temp)
+	go restartAll()
+
+	jsonResponse(w, 200, true, "Restore done", nil)
+}
+
+func cleanupOldBackupsHandler(w http.ResponseWriter, r *http.Request) {
+	out, err := exec.Command("rclone", "lsjson", RcloneRemote).Output()
+	if err != nil {
+		jsonResponse(w, 500, false, err.Error(), nil)
+		return
+	}
+
+	var arr []map[string]interface{}
+	json.Unmarshal(out, &arr)
+
+	now := time.Now()
+	deleted := 0
+
+	for _, x := range arr {
+		n, ok := x["Name"].(string)
+		if !ok || !strings.HasSuffix(n, ".zip") {
+			continue
+		}
+		tm, _ := time.Parse(time.RFC3339, x["ModTime"].(string))
+		if now.Sub(tm).Hours() > 168 {
+			exec.Command("rclone", "delete", RcloneRemote+"/"+n).Run()
+			deleted++
+		}
+	}
+
+	jsonResponse(w, 200, true, "Cleanup OK", map[string]int{
+		"deleted": deleted,
+	})
+}
+
+func toggleAutoBackupHandler(w http.ResponseWriter, r *http.Request) {
+	cfg := AutoBackupCfg{Enabled: false, Schedule: "0 2 * * *"}
+
+	if b, err := ioutil.ReadFile(AutoBackupFile); err == nil {
+		json.Unmarshal(b, &cfg)
+	}
+
+	cfg.Enabled = !cfg.Enabled
+
+	b, _ := json.MarshalIndent(cfg, "", "  ")
+	_ = ioutil.WriteFile(AutoBackupFile, b, 0644)
+
+	if cfg.Enabled {
+		_ = ioutil.WriteFile("/etc/cron.d/zivpn-backup",
+			[]byte(cfg.Schedule+" root /usr/local/bin/zivpn-backup\n"), 0644)
+	} else {
+		_ = os.Remove("/etc/cron.d/zivpn-backup")
+	}
+
+	jsonResponse(w, 200, true, "OK", cfg)
+}
+
+func getAutoBackupStatusHandler(w http.ResponseWriter, r *http.Request) {
+	cfg := AutoBackupCfg{Enabled: false, Schedule: "0 2 * * *"}
+	if b, err := ioutil.ReadFile(AutoBackupFile); err == nil {
+		json.Unmarshal(b, &cfg)
+	}
+	jsonResponse(w, 200, true, "OK", cfg)
+}
+
+func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
+	if b, err := ioutil.ReadFile(ApiKeyFile); err == nil {
+		AuthToken = strings.TrimSpace(string(b))
+	}
+
+	os.MkdirAll(BackupDir, 0755)
+
+	http.HandleFunc("/api/user/create", authMiddleware(createUserHandler))
+	http.HandleFunc("/api/user/delete", authMiddleware(deleteUserHandler))
+	http.HandleFunc("/api/user/renew", authMiddleware(renewUserHandler))
+	http.HandleFunc("/api/users", authMiddleware(listUsersHandler))
+	http.HandleFunc("/api/info", authMiddleware(getSystemInfoHandler))
+	http.HandleFunc("/api/backup", authMiddleware(handleBackupHandler))
+	http.HandleFunc("/api/backup/list", authMiddleware(listBackupsHandler))
+	http.HandleFunc("/api/restore", authMiddleware(restoreHandler))
+	http.HandleFunc("/api/backup/cleanup", authMiddleware(cleanupOldBackupsHandler))
+	http.HandleFunc("/api/backup/auto", authMiddleware(toggleAutoBackupHandler))
+	http.HandleFunc("/api/backup/auto/status", authMiddleware(getAutoBackupStatusHandler))
+
+	log.Println("ZiVPN API running on", Port)
+	log.Fatal(http.ListenAndServe(Port, nil))
 }
