@@ -85,11 +85,11 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 		case "restore":
 			userStates[msg.From.ID] = "restore_id"
 			tempUserData[msg.From.ID] = make(map[string]string)
-			sendMessageSimple(bot, msg.Chat.ID, "🔄 *RESTORE BACKUP*\n\nSilakan masukkan **ID Backup**:")
+			sendStyledMessage(bot, msg.Chat.ID, "🔄 *RESTORE BACKUP*\n\nSilakan masukkan **ID Backup**:")
 		case "listbackup":
 			listBackups(bot, msg.Chat.ID)
 		default:
-			sendMessageSimple(bot, msg.Chat.ID, "❌ *PERINTAH TIDAK DIKENAL*\n\nGunakan `/menu` untuk membuka menu utama.")
+			sendStyledMessage(bot, msg.Chat.ID, "❌ *PERINTAH TIDAK DIKENAL*\n\nGunakan `/menu` untuk membuka menu utama.")
 		}
 	}
 }
@@ -101,7 +101,7 @@ func handleCallback(bot *tgbotapi.BotAPI, q *tgbotapi.CallbackQuery, adminID int
 	case data == "menu_create":
 		userStates[q.From.ID] = "create_username"
 		tempUserData[q.From.ID] = make(map[string]string)
-		sendMessageSimple(bot, q.Message.Chat.ID, "👤 *BUAT AKUN BARU*\n\nSilakan masukkan **username** untuk akun baru:")
+		sendStyledMessage(bot, q.Message.Chat.ID, "👤 *BUAT AKUN BARU*\n\nSilakan masukkan **username** untuk akun baru:")
 	case data == "menu_trial":
 		createTrialUser(bot, q.Message.Chat.ID)
 	case data == "menu_delete":
@@ -121,7 +121,7 @@ func handleCallback(bot *tgbotapi.BotAPI, q *tgbotapi.CallbackQuery, adminID int
 	case data == "backup_restore":
 		userStates[q.From.ID] = "restore_id"
 		tempUserData[q.From.ID] = make(map[string]string)
-		sendMessageSimple(bot, q.Message.Chat.ID, "🔄 *RESTORE BACKUP*\n\nSilakan masukkan **ID Backup**:")
+		sendStyledMessage(bot, q.Message.Chat.ID, "🔄 *RESTORE BACKUP*\n\nSilakan masukkan **ID Backup**:")
 	case data == "backup_auto":
 		toggleAutoBackup(bot, q.Message.Chat.ID)
 	case data == "cancel":
@@ -138,7 +138,7 @@ func handleCallback(bot *tgbotapi.BotAPI, q *tgbotapi.CallbackQuery, adminID int
 		username := strings.TrimPrefix(data, "select_renew:")
 		tempUserData[q.From.ID] = map[string]string{"username": username}
 		userStates[q.From.ID] = "renew_days"
-		sendMessageSimple(bot, q.Message.Chat.ID, fmt.Sprintf("🔄 *RENEW AKUN*\n\nUsername: `%s`\n\nMasukkan **jumlah hari** untuk diperpanjang:", username))
+		sendStyledMessage(bot, q.Message.Chat.ID, fmt.Sprintf("🔄 *RENEW AKUN*\n\nUsername: `%s`\n\nMasukkan **jumlah hari** untuk diperpanjang:", username))
 	case strings.HasPrefix(data, "select_delete:"):
 		username := strings.TrimPrefix(data, "select_delete:")
 		msg := tgbotapi.NewMessage(q.Message.Chat.ID, fmt.Sprintf("🗑 *KONFIRMASI HAPUS*\n\nApakah Anda yakin ingin menghapus akun:\n\n`%s`", username))
@@ -166,11 +166,11 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 		}
 		tempUserData[uid]["username"] = text
 		userStates[uid] = "create_days"
-		sendMessageSimple(bot, msg.Chat.ID, "⏳ *DURASI AKUN*\n\nMasukkan **jumlah hari** masa aktif akun:")
+		sendStyledMessage(bot, msg.Chat.ID, "⏳ *DURASI AKUN*\n\nMasukkan **jumlah hari** masa aktif akun:")
 	case "create_days":
 		days, err := strconv.Atoi(text)
 		if err != nil || days <= 0 {
-			sendMessageSimple(bot, msg.Chat.ID, "❌ *INPUT TIDAK VALID*\n\nDurasi harus berupa **angka lebih dari 0**.")
+			sendStyledMessage(bot, msg.Chat.ID, "❌ *INPUT TIDAK VALID*\n\nDurasi harus berupa **angka lebih dari 0**.")
 			return
 		}
 		username := tempUserData[uid]["username"]
@@ -179,15 +179,15 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	case "renew_days":
 		days, err := strconv.Atoi(text)
 		if err != nil || days <= 0 {
-			sendMessageSimple(bot, msg.Chat.ID, "❌ *INPUT TIDAK VALID*\n\nDurasi harus berupa **angka lebih dari 0**.")
+			sendStyledMessage(bot, msg.Chat.ID, "❌ *INPUT TIDAK VALID*\n\nDurasi harus berupa **angka lebih dari 0**.")
 			return
 		}
 		username := tempUserData[uid]["username"]
 		renewUser(bot, msg.Chat.ID, username, days)
 		resetState(uid)
 	case "restore_id":
-	restoreBackup(bot, msg.Chat.ID, text)
-	resetState(uid)
+		restoreBackup(bot, msg.Chat.ID, text)
+		resetState(uid)
 	default:
 		resetState(uid)
 	}
@@ -202,7 +202,7 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 	})
 
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT TRIAL*\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL MEMBUAT TRIAL*\nError: "+err.Error())
 		return
 	}
 
@@ -215,12 +215,14 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 		}
 
 		msg := fmt.Sprintf(
-			"🎯 *AKUN TRIAL BERHASIL DIBUAT*\n\n"+
-				"▸ **Username**: `%s`\n"+
-				"▸ **Password**: `%s`\n"+
-				"▸ **Domain**: `%s`\n"+
-				"▸ **Masa Aktif**: 1 Hari\n"+
-				"▸ **Expired**: `%s`\n\n"+
+			"✨ *AKUN TRIAL BERHASIL DIBUAT*\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
+				"👤 **Username**\n`%s`\n\n"+
+				"🔑 **Password**\n`%s`\n\n"+
+				"🌐 **Domain**\n`%s`\n\n"+
+				"⏰ **Masa Aktif**\n1 Hari\n\n"+
+				"📅 **Expired**\n`%s`\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
 				"_Akun trial akan otomatis terhapus setelah expired._",
 			data["password"],
 			data["password"],
@@ -234,15 +236,15 @@ func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
 
 		return
 	}
-	sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT TRIAL*")
+	sendStyledMessage(bot, chatID, "❌ *GAGAL MEMBUAT TRIAL*")
 }
 
 func createBackup(bot *tgbotapi.BotAPI, chatID int64) {
-	sendMessageSimple(bot, chatID, "🔄 *MEMBUAT BACKUP...*\n\n_Sedang memproses, harap tunggu..._")
+	sendStyledMessage(bot, chatID, "🔄 *MEMBUAT BACKUP...*\n\n_Sedang memproses, harap tunggu..._")
 
 	res, err := apiCall("POST", "/backup", nil)
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT BACKUP*\n\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL MEMBUAT BACKUP*\n\nError: "+err.Error())
 		return
 	}
 
@@ -251,64 +253,74 @@ func createBackup(bot *tgbotapi.BotAPI, chatID int64) {
 
 		backupID := fmt.Sprintf("%v", data["backup_id"])
 		filename := fmt.Sprintf("%v", data["filename"])
+		downloadURL := fmt.Sprintf("%v", data["download_url"])
 
 		msg := fmt.Sprintf(
-			"✅ *BACKUP BERHASIL DIBUAT*\n\n"+
-				"▸ **Google Drive File ID**: `%s`\n"+
-				"▸ **Nama File**: `%s`\n\n"+
+			"✅ *BACKUP BERHASIL DIBUAT*\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
+				"📁 **Google Drive File ID**\n```\n%s\n```\n\n"+
+				"📄 **Nama File**\n`%s`\n\n"+
+				"🔗 **Download URL**\n`%s`\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
 				"_Gunakan File ID saat melakukan restore._",
 			backupID,
 			filename,
+			downloadURL,
 		)
 
-		sendMessageSimple(bot, chatID, msg)
+		sendStyledMessage(bot, chatID, msg)
 		return
 	}
 
-	sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT BACKUP*")
+	sendStyledMessage(bot, chatID, "❌ *GAGAL MEMBUAT BACKUP*")
 }
 
 func listBackups(bot *tgbotapi.BotAPI, chatID int64) {
-	sendMessageSimple(bot, chatID, "📋 *MENGAMBIL DAFTAR BACKUP...*")
+	sendStyledMessage(bot, chatID, "📋 *MENGAMBIL DAFTAR BACKUP...*")
 
 	res, err := apiCall("GET", "/backup/list", nil)
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGAMBIL BACKUP*\n\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL MENGAMBIL BACKUP*\n\nError: "+err.Error())
 		return
 	}
 
 	if success, ok := res["success"].(bool); ok && success {
 		arr, _ := res["data"].([]interface{})
 		if len(arr) == 0 {
-			sendMessageSimple(bot, chatID, "📭 *TIDAK ADA BACKUP*\n\n_Belum ada backup yang tersedia._")
+			sendStyledMessage(bot, chatID, "📭 *TIDAK ADA BACKUP*\n\n_Belum ada backup yang tersedia._")
 			return
 		}
 
 		var b strings.Builder
-		b.WriteString("📦 *DAFTAR BACKUP (Google Drive)*\n\n")
+		b.WriteString("📦 *DAFTAR BACKUP (Google Drive)*\n")
+		b.WriteString("━━━━━━━━━━━━━━━━━━━━\n\n")
 
 		for i, it := range arr {
 			m := it.(map[string]interface{})
-			id := fmt.Sprintf("%v", m["id"]) // sekarang ID = Google Drive File ID
+			fileID := fmt.Sprintf("%v", m["id"])
 			file := fmt.Sprintf("%v", m["filename"])
+			size := m["size"]
+			sizeStr := formatBytes(size)
+			downloadURL := fmt.Sprintf("%v", m["download_url"])
 
 			b.WriteString(fmt.Sprintf(
-				"**%d.**\n"+
-					"▸ *File ID:* `%s`\n"+
-					"▸ *File:* `%s`\n\n",
-				i+1, id, file,
+				"**%d.** 📁 `%s`\n"+
+					"   ├─ 📄 *File:* `%s`\n"+
+					"   ├─ 💾 *Size:* `%s`\n"+
+					"   └─ 🔗 *Download:* `%s`\n\n",
+				i+1, fileID, file, sizeStr, downloadURL,
 			))
 		}
 
-		sendMessageSimple(bot, chatID, b.String())
+		sendStyledMessage(bot, chatID, b.String())
 		return
 	}
 
-	sendMessageSimple(bot, chatID, "❌ *GAGAL MENGAMBIL DAFTAR BACKUP*")
+	sendStyledMessage(bot, chatID, "❌ *GAGAL MENGAMBIL DAFTAR BACKUP*")
 }
 
 func restoreBackup(bot *tgbotapi.BotAPI, chatID int64, backupID string) {
-	sendMessageSimple(bot, chatID, 
+	sendStyledMessage(bot, chatID,
 		fmt.Sprintf("🔄 *MEMPROSES RESTORE...*\n\nID Backup (Drive ID): `%s`", backupID))
 
 	res, err := apiCall("POST", "/restore", map[string]interface{}{
@@ -316,22 +328,49 @@ func restoreBackup(bot *tgbotapi.BotAPI, chatID int64, backupID string) {
 	})
 
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL RESTORE*\n\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL RESTORE*\n\nError: "+err.Error())
 		return
 	}
 
 	if ok, _ := res["success"].(bool); ok {
-		sendMessageSimple(bot, chatID, 
+		sendStyledMessage(bot, chatID,
 			"✅ *RESTORE BERHASIL*\n\n_Sistem berhasil direstore dari Google Drive._")
 		return
 	}
 
-	sendMessageSimple(bot, chatID, 
+	sendStyledMessage(bot, chatID,
 		"❌ *GAGAL RESTORE*\n\nPesan: "+fmt.Sprintf("%v", res["message"]))
+}
+
+func formatBytes(size interface{}) string {
+	var bytes int64
+	
+	switch v := size.(type) {
+	case float64:
+		bytes = int64(v)
+	case int64:
+		bytes = v
+	case int:
+		bytes = int64(v)
+	default:
+		return "Unknown"
+	}
+	
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 func showBackupMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	msg := tgbotapi.NewMessage(chatID, "💾 *BACKUP MANAGER*\n\n_Pilih opsi backup yang diinginkan:_")
+	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📦 Backup Sekarang", "backup_create"),
@@ -345,32 +384,31 @@ func showBackupMenu(bot *tgbotapi.BotAPI, chatID int64) {
 			tgbotapi.NewInlineKeyboardButtonData("🏠 Menu Utama", "cancel"),
 		),
 	)
-	msg.ParseMode = "Markdown"
 	sendAndTrack(bot, msg)
 }
 
 func toggleAutoBackup(bot *tgbotapi.BotAPI, chatID int64) {
-	sendMessageSimple(bot, chatID, "⚙️ *MENGUBAH SETTING AUTO BACKUP...*")
+	sendStyledMessage(bot, chatID, "⚙️ *MENGUBAH SETTING AUTO BACKUP...*")
 	res, err := apiCall("POST", "/backup/auto", nil)
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGUBAH SETTING*\n\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL MENGUBAH SETTING*\n\nError: "+err.Error())
 		return
 	}
 	if success, ok := res["success"].(bool); ok && success {
-		sendMessageSimple(bot, chatID, "✅ *AUTO BACKUP DIPERBARUI*")
+		sendStyledMessage(bot, chatID, "✅ *AUTO BACKUP DIPERBARUI*")
 		return
 	}
-	sendMessageSimple(bot, chatID, "❌ *GAGAL MENGUBAH SETTING AUTO BACKUP*")
+	sendStyledMessage(bot, chatID, "❌ *GAGAL MENGUBAH SETTING AUTO BACKUP*")
 }
 
 func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action string) {
 	users, err := getUsers()
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGAMBIL USER*\n\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL MENGAMBIL USER*\n\nError: "+err.Error())
 		return
 	}
 	if len(users) == 0 {
-		sendMessageSimple(bot, chatID, "📭 *TIDAK ADA USER*\n\n_Belum ada user yang terdaftar._")
+		sendStyledMessage(bot, chatID, "📭 *TIDAK ADA USER*\n\n_Belum ada user yang terdaftar._")
 		return
 	}
 	perPage := 8
@@ -425,13 +463,18 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 			}
 		}
 	}
-	msgText := fmt.Sprintf("🚀 *ZIVPN CONTROL PANEL*\n\n"+
-		"▸ **Domain**: `%s`\n", domain)
+	
+	var b strings.Builder
+	b.WriteString("🚀 *ZIVPN CONTROL PANEL*\n")
+	b.WriteString("━━━━━━━━━━━━━━━━━━━━\n\n")
+	b.WriteString(fmt.Sprintf("🌐 **Domain**: `%s`\n", domain))
 	if ipInfo.City != "" {
-		msgText += fmt.Sprintf("▸ **Lokasi**: %s\n▸ **ISP**: %s\n", ipInfo.City, ipInfo.Isp)
+		b.WriteString(fmt.Sprintf("📍 **Lokasi**: %s\n", ipInfo.City))
+		b.WriteString(fmt.Sprintf("📡 **ISP**: %s\n", ipInfo.Isp))
 	}
-	msgText += "\n_Pilih menu di bawah untuk melanjutkan:_"
-	msg := tgbotapi.NewMessage(chatID, msgText)
+	b.WriteString("\n📌 _Pilih menu di bawah untuk melanjutkan:_")
+	
+	msg := tgbotapi.NewMessage(chatID, b.String())
 	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -453,7 +496,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 	sendAndTrack(bot, msg)
 }
 
-func sendMessageSimple(bot *tgbotapi.BotAPI, chatID int64, text string) {
+func sendStyledMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "Markdown"
 	if _, ok := userStates[chatID]; ok {
@@ -556,17 +599,18 @@ func getUsers() ([]map[string]interface{}, error) {
 func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 	users, err := getUsers()
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGAMBIL USER*\n\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL MENGAMBIL USER*\n\nError: "+err.Error())
 		return
 	}
 
 	if len(users) == 0 {
-		sendMessageSimple(bot, chatID, "📭 *TIDAK ADA USER*\n\n_Belum ada user yang terdaftar._")
+		sendStyledMessage(bot, chatID, "📭 *TIDAK ADA USER*\n\n_Belum ada user yang terdaftar._")
 		return
 	}
 
 	var b strings.Builder
-	b.WriteString("📋 *DAFTAR USER AKTIF*\n\n")
+	b.WriteString("📋 *DAFTAR USER AKTIF*\n")
+	b.WriteString("━━━━━━━━━━━━━━━━━━━━\n\n")
 
 	for i, u := range users {
 		pass := fmt.Sprintf("%v", u["password"])
@@ -578,7 +622,7 @@ func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
 			icon = "🔴"
 		}
 
-		b.WriteString(fmt.Sprintf("**%d.** %s `%s`\n   ▸ Expired: `%s`\n\n", i+1, icon, pass, exp))
+		b.WriteString(fmt.Sprintf("**%d.** %s `%s`\n   └─ 📅 `%s`\n\n", i+1, icon, pass, exp))
 	}
 
 	msg := tgbotapi.NewMessage(chatID, b.String())
@@ -599,7 +643,7 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 	})
 
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT AKUN*\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL MEMBUAT AKUN*\nError: "+err.Error())
 		return
 	}
 
@@ -612,11 +656,13 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		}
 
 		msg := fmt.Sprintf(
-			"✅ *AKUN BERHASIL DIBUAT*\n\n"+
-				"▸ **Username**: `%v`\n"+
-				"▸ **Password**: `%v`\n"+
-				"▸ **Domain**: `%s`\n"+
-				"▸ **Expired**: `%v`\n\n"+
+			"✅ *AKUN BERHASIL DIBUAT*\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
+				"👤 **Username**\n`%v`\n\n"+
+				"🔑 **Password**\n`%v`\n\n"+
+				"🌐 **Domain**\n`%s`\n\n"+
+				"📅 **Expired**\n`%v`\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
 				"_Simpan informasi akun dengan baik._",
 			data["password"],
 			data["password"],
@@ -631,92 +677,89 @@ func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
 		return
 	}
 
-	sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT AKUN*: "+fmt.Sprintf("%v", res["message"]))
+	sendStyledMessage(bot, chatID, "❌ *GAGAL MEMBUAT AKUN*: "+fmt.Sprintf("%v", res["message"]))
 }
 
 func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
-	sendMessageSimple(bot, chatID, "🗑 *MENGHAPUS AKUN...*\n\nUsername: `"+username+"`")
+	sendStyledMessage(bot, chatID, "🗑 *MENGHAPUS AKUN...*\n\nUsername: `"+username+"`")
 	res, err := apiCall("POST", "/user/delete", map[string]interface{}{"password": username})
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGHAPUS*\n\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL MENGHAPUS*\n\nError: "+err.Error())
 		return
 	}
 	if ok, _ := res["success"].(bool); ok {
-		sendMessageSimple(bot, chatID, "✅ *AKUN BERHASIL DIHAPUS*\n\nUsername: `"+username+"`")
+		msg := fmt.Sprintf(
+			"✅ *AKUN BERHASIL DIHAPUS*\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
+				"👤 **Username**\n`%s`\n"+
+				"━━━━━━━━━━━━━━━━━━━━",
+			username,
+		)
+		sendStyledMessage(bot, chatID, msg)
 		showMainMenu(bot, chatID)
 		return
 	}
-	sendMessageSimple(bot, chatID, "❌ *GAGAL MENGHAPUS*\n\nPesan: "+fmt.Sprintf("%v", res["message"]))
+	sendStyledMessage(bot, chatID, "❌ *GAGAL MENGHAPUS*\n\nPesan: "+fmt.Sprintf("%v", res["message"]))
 	showMainMenu(bot, chatID)
 }
 
 func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
-	sendMessageSimple(bot, chatID, "🔄 *MEMPERPANJANG AKUN...*\n\nUsername: `"+username+"`")
-	res, err := apiCall("POST", "/user/renew", map[string]interface{}{"password": username, "days": days})
+	sendStyledMessage(bot, chatID, "🔄 *MEMPROSES RENEW...*\n\nUsername: `"+username+"`")
+	res, err := apiCall("POST", "/user/renew", map[string]interface{}{
+		"password": username,
+		"days":     days,
+	})
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ *GAGAL RENEW*\n\nError: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ *GAGAL RENEW*\n\nError: "+err.Error())
 		return
 	}
 	if ok, _ := res["success"].(bool); ok {
 		data := res["data"].(map[string]interface{})
-		msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG*\n\n"+
-			"▸ **Username**: `%v`\n"+
-			"▸ **Expired Baru**: `%v`\n\n"+
-			"_Akun telah diperpanjang selama %d hari._",
+		msg := fmt.Sprintf(
+			"✅ *AKUN BERHASIL DIPERPANJANG*\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
+				"👤 **Username**\n`%v`\n\n"+
+				"📅 **Expired Baru**\n`%v`\n"+
+				"━━━━━━━━━━━━━━━━━━━━\n"+
+				"_Akun telah diperpanjang selama %d hari._",
 			data["password"], data["expired"], days)
-		sendMessageSimple(bot, chatID, msg)
+		sendStyledMessage(bot, chatID, msg)
 		showMainMenu(bot, chatID)
 		return
 	}
-	sendMessageSimple(bot, chatID, "❌ *GAGAL RENEW*\n\nPesan: "+fmt.Sprintf("%v", res["message"]))
+	sendStyledMessage(bot, chatID, "❌ *GAGAL RENEW*\n\nPesan: "+fmt.Sprintf("%v", res["message"]))
 	showMainMenu(bot, chatID)
 }
 
 func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 	res, err := apiCall("GET", "/info", nil)
 	if err != nil {
-		sendMessageSimple(bot, chatID, "❌ Gagal mengambil info: "+err.Error())
+		sendStyledMessage(bot, chatID, "❌ Gagal mengambil info: "+err.Error())
 		return
 	}
 
 	data := res["data"].(map[string]interface{})
 	get := func(k string) string { return strings.TrimSpace(fmt.Sprintf("%v", data[k])) }
 
-	separator := "━━━━━━━━━━━━━━━━━━━━"
+	var b strings.Builder
+	b.WriteString("*🖥️ VPS INFORMATION*\n")
+	b.WriteString("━━━━━━━━━━━━━━━━━━━━\n\n")
+	b.WriteString(fmt.Sprintf("🌍 *IP Address* : `%s`\n", get("public_ip")))
+	b.WriteString(fmt.Sprintf("🔗 *Domain*     : `%s`\n", get("domain")))
+	b.WriteString(fmt.Sprintf("🧩 *OS*         : `%s`\n", get("os")))
+	b.WriteString(fmt.Sprintf("🧬 *Kernel*     : `%s`\n", get("kernel")))
+	b.WriteString(fmt.Sprintf("💠 *CPU*        : `%s`\n", get("cpu")))
+	b.WriteString(fmt.Sprintf("⚙️ *Cores*      : `%s`\n", get("cores")))
+	b.WriteString(fmt.Sprintf("📦 *RAM*        : `%s`\n", get("ram")))
+	b.WriteString(fmt.Sprintf("💽 *Disk*       : `%s`\n", get("disk")))
+	b.WriteString(fmt.Sprintf("⏱ *Uptime*     : `%s`\n", get("uptime")))
+	b.WriteString(fmt.Sprintf("🛰 *Service*    : `%s`\n", get("service")))
+	b.WriteString(fmt.Sprintf("👥 *Active Users* : `%s`\n", get("user_count")))
+	b.WriteString(fmt.Sprintf("🗂 *Backups*    : `%s`\n", get("backup_count")))
+	b.WriteString(fmt.Sprintf("⏰ *Server Time* : `%s`\n", get("server_time")))
+	b.WriteString("━━━━━━━━━━━━━━━━━━━━")
 
-	msg := fmt.Sprintf(
-		"*🖥️ VPS INFORMATION*\n%s\n"+
-			"🌍 *IP Address* : `%s`\n"+
-			"🔗 *Domain*     : `%s`\n"+
-			"🧩 *OS*         : `%s`\n"+
-			"🧬 *Kernel*     : `%s`\n"+
-			"💠 *CPU*        : `%s`\n"+
-			"⚙️ *Cores*      : `%s`\n"+
-			"📦 *RAM*        : `%s`\n"+
-			"💽 *Disk*       : `%s`\n"+
-			"⏱ *Uptime*     : `%s`\n"+
-			"🛰 *Service*    : `%s`\n"+
-			"👥 *Active Users* : `%s`\n"+
-			"🗂 *Backups*    : `%s`\n"+
-			"⏰ *Server Time* : `%s`\n%s",
-		separator,
-		get("public_ip"),
-		get("domain"),
-		get("os"),
-		get("kernel"),
-		get("cpu"),
-		get("cores"),
-		get("ram"),
-		get("disk"),
-		get("uptime"),
-		get("service"),
-		get("user_count"),
-		get("backup_count"),
-		get("server_time"),
-		separator,
-	)
-
-	m := tgbotapi.NewMessage(chatID, msg)
+	m := tgbotapi.NewMessage(chatID, b.String())
 	m.ParseMode = "Markdown"
 	m.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(

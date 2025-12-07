@@ -477,14 +477,11 @@ func handleBackupHandler(w http.ResponseWriter, r *http.Request) {
 
 	_ = createZip(temp, files)
 
-	// Upload ke Google Drive
-	_, err := exec.Command("rclone", "copy", temp, RcloneRemote).CombinedOutput()
-	if err != nil {
+	if _, err := exec.Command("rclone", "copy", temp, RcloneRemote).CombinedOutput(); err != nil {
 		jsonResponse(w, 500, false, "Upload failed", nil)
 		return
 	}
 
-	// Ambil daftar file untuk mendapatkan FILE ID Google Drive
 	list, err := exec.Command("rclone", "lsjson", RcloneRemote).Output()
 	if err != nil {
 		jsonResponse(w, 500, false, "Failed reading drive list", nil)
@@ -499,6 +496,7 @@ func handleBackupHandler(w http.ResponseWriter, r *http.Request) {
 		if f["Name"] == filename {
 			if idStr, ok := f["ID"].(string); ok {
 				fileID = idStr
+				break
 			}
 		}
 	}
@@ -508,11 +506,14 @@ func handleBackupHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	downloadURL := fmt.Sprintf("https://drive.google.com/uc?id=%s&export=download", fileID)
+
 	os.Remove(temp)
 
 	jsonResponse(w, 200, true, "Backup success", map[string]string{
-		"backup_id": fileID,
-		"filename":  filename,
+		"backup_id":    fileID,
+		"filename":     filename,
+		"download_url": downloadURL,
 	})
 }
 
@@ -524,7 +525,7 @@ func listBackupsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var arr []map[string]interface{}
-	_ = json.Unmarshal(out, &arr)
+	json.Unmarshal(out, &arr)
 
 	var res []map[string]interface{}
 	for _, f := range arr {
@@ -538,10 +539,13 @@ func listBackupsHandler(w http.ResponseWriter, r *http.Request) {
 			fileID = idStr
 		}
 
+		downloadURL := fmt.Sprintf("https://drive.google.com/uc?id=%s&export=download", fileID)
+
 		res = append(res, map[string]interface{}{
-			"id":       fileID,  // FILE ID Google Drive
-			"filename": name,
-			"size":     f["Size"],
+			"id":           fileID,
+			"filename":     name,
+			"size":         f["Size"],
+			"download_url": downloadURL,
 		})
 	}
 
@@ -558,18 +562,32 @@ func restoreHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tmp := "/tmp/restore.zip"
-
-	_, err := exec.Command(
-		"rclone",
-		"copy",
-		fmt.Sprintf("drive:%s", req.BackupID),
-		tmp,
-		"--drive-id", req.BackupID,
-	).CombinedOutput()
-
+	
+	driveURL := fmt.Sprintf("https://drive.google.com/uc?id=%s&export=download", req.BackupID)
+	
+	cmd := exec.Command("wget", "--quiet", "--show-progress", "-O", tmp, driveURL)
+	output, err := cmd.CombinedOutput()
+	
 	if err != nil {
-		jsonResponse(w, 500, false, "Copy failed", nil)
-		return
+		cmd = exec.Command("curl", "-L", "-o", tmp, driveURL)
+		output, err = cmd.CombinedOutput()
+		
+		if err != nil {
+			cmd = exec.Command(
+				"rclone",
+				"copyto",
+				fmt.Sprintf("drive:/%s", req.BackupID),
+				tmp,
+			)
+			output, err = cmd.CombinedOutput()
+			
+			if err != nil {
+				jsonResponse(w, 500, false, 
+					fmt.Sprintf("Download failed: %s\nOutput: %s", err.Error(), string(output)), 
+					nil)
+				return
+			}
+		}
 	}
 
 	z, err := zip.OpenReader(tmp)
@@ -585,17 +603,15 @@ func restoreHandler(w http.ResponseWriter, r *http.Request) {
 
 		rc, _ := f.Open()
 		out, _ := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
-
 		io.Copy(out, rc)
-
 		out.Close()
 		rc.Close()
 	}
 
-	_ = os.Remove(tmp)
+	os.Remove(tmp)
 	go restartAll()
 
-	jsonResponse(w, 200, true, "Restore done", nil)
+	jsonResponse(w, 200, true, "Restore completed successfully", nil)
 }
 
 func cleanupOldBackupsHandler(w http.ResponseWriter, r *http.Request) {
