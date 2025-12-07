@@ -147,6 +147,14 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func getDomain() string {
+    b, err := ioutil.ReadFile(DomainFile)
+    if err != nil {
+        return "Unknown"
+    }
+    return strings.TrimSpace(string(b))
+}
+
 func createUserHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, 405, false, "Method not allowed", nil)
@@ -184,9 +192,10 @@ func createUserHandler(w http.ResponseWriter, r *http.Request) {
 	go restartAll()
 
 	jsonResponse(w, 200, true, "User created", map[string]string{
-		"password": req.Password,
-		"expired":  exp,
-	})
+	"password": req.Password,
+	"expired": exp,
+	"domain": getDomain(), 
+  })
 }
 
 func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +258,7 @@ func renewUserHandler(w http.ResponseWriter, r *http.Request) {
 	users, _ := loadUsers()
 	found := false
 	var newUsers []string
+	var newExp string
 
 	for _, line := range users {
 		parts := strings.Split(line, "|")
@@ -262,12 +272,15 @@ func renewUserHandler(w http.ResponseWriter, r *http.Request) {
 
 		if pass == req.Password {
 			found = true
+
 			old, err := time.Parse("2006-01-02", exp)
 			if err != nil || old.Before(time.Now()) {
 				old = time.Now()
 			}
-			newExp := old.Add(time.Hour * 24 * time.Duration(req.Days)).Format("2006-01-02")
+
+			newExp = old.Add(time.Hour * 24 * time.Duration(req.Days)).Format("2006-01-02")
 			newUsers = append(newUsers, fmt.Sprintf("%s | %s", pass, newExp))
+
 		} else {
 			newUsers = append(newUsers, line)
 		}
@@ -280,7 +293,12 @@ func renewUserHandler(w http.ResponseWriter, r *http.Request) {
 
 	_ = saveUsers(newUsers)
 	go restartAll()
-	jsonResponse(w, 200, true, "User renewed", nil)
+
+	jsonResponse(w, 200, true, "User renewed", map[string]string{
+		"password": req.Password,
+		"expired":  newExp,
+		"domain":   getDomain(),
+	})
 }
 
 func listUsersHandler(w http.ResponseWriter, r *http.Request) {
@@ -309,13 +327,17 @@ func listUsersHandler(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 200, true, "OK", out)
 }
 
-func execOut(s string) string {
-	parts := strings.Fields(s)
-	if len(parts) == 0 {
+func execOut(cmd string) string {
+	out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
+	if err != nil {
 		return ""
 	}
-	out, _ := exec.Command(parts[0], parts[1:]...).Output()
-	return strings.TrimSpace(string(out))
+	s := strings.TrimSpace(string(out))
+	lines := strings.Split(s, "\n")
+	if len(lines) > 0 {
+		return strings.TrimSpace(lines[0])
+	}
+	return ""
 }
 
 func isActive(service string) bool {
@@ -327,29 +349,35 @@ func isActive(service string) bool {
 }
 
 func getSystemInfoHandler(w http.ResponseWriter, r *http.Request) {
-	pub := execOut("curl -s ifconfig.me")
-	privSplit := strings.Fields(execOut("hostname -I"))
-	priv := ""
-	if len(privSplit) > 0 {
-		priv = privSplit[0]
-	}
+	pub := execOut(`curl -s ifconfig.me`)
+	priv := strings.TrimSpace(execOut(`hostname -I | awk '{print $1}'`))
 
 	domain := "Unknown"
 	if b, err := ioutil.ReadFile(DomainFile); err == nil {
 		domain = strings.TrimSpace(string(b))
 	}
 
-	osInfo := execOut("uname -a")
-	kernel := execOut("uname -r")
-	cpu := execOut("awk -F: '/model name/ {print $2; exit}' /proc/cpuinfo")
-	if cpu == "" {
-		cpu = execOut("cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d: -f2")
+	osInfo := strings.TrimSpace(execOut(`grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"'`))
+	if osInfo == "" {
+		osInfo = execOut(`uname -a`)
 	}
+
+	kernel := execOut(`uname -r`)
+
+	cpu := execOut(`grep "model name" /proc/cpuinfo | head -1 | cut -d: -f2`)
 	cpu = strings.TrimSpace(cpu)
 
-	cores := execOut("nproc")
-	ram := execOut("free -h | awk '/Mem:/ {print $3 \" / \" $2}'")
-	disk := execOut("df -h / | awk 'NR==2{print $3 \" / \" $2 \" (\" $5 \")\"}'")
+	cores := execOut(`nproc`)
+
+	ramUsed := execOut(`free -m | awk '/Mem:/ {print $3}'`)
+	ramTotal := execOut(`free -m | awk '/Mem:/ {print $2}'`)
+	ram := fmt.Sprintf("%sMB / %sMB", strings.TrimSpace(ramUsed), strings.TrimSpace(ramTotal))
+
+	diskUsed := execOut(`df -h / | awk 'NR==2 {print $3}'`)
+	diskAvail := execOut(`df -h / | awk 'NR==2 {print $4}'`)
+	disk := fmt.Sprintf("%s / %s", strings.TrimSpace(diskUsed), strings.TrimSpace(diskAvail))
+
+	uptime := strings.TrimSpace(execOut(`uptime -p | sed 's/up //'`))
 
 	backupCount := 0
 	if out, err := exec.Command("rclone", "lsjson", RcloneRemote).Output(); err == nil {
@@ -363,20 +391,46 @@ func getSystemInfoHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	userCount := 0
+	if b, err := ioutil.ReadFile(UserDB); err == nil {
+		lines := strings.Split(string(b), "\n")
+		now := time.Now().Format("2006-01-02")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || !strings.Contains(line, "|") {
+				continue
+			}
+			parts := strings.Split(line, "|")
+			if len(parts) >= 2 {
+				exp := strings.TrimSpace(parts[1])
+				if exp >= now {
+					userCount++
+				}
+			}
+		}
+	}
+
+	serviceStatus := "active"
+	if !isActive("zivpn") || !isActive("zivpn-api") || !isActive("zivpn-bot") {
+		serviceStatus = "inactive"
+	}
+
 	jsonResponse(w, 200, true, "OK", map[string]interface{}{
-		"public_ip":   pub,
-		"private_ip":  priv,
-		"domain":      domain,
-		"os":          osInfo,
-		"kernel":      kernel,
-		"cpu":         cpu,
-		"cores":       cores,
-		"ram":         ram,
-		"disk":        disk,
-		"port":        "5667 UDP, 8080 API",
-		"service":     map[string]bool{"zivpn": isActive("zivpn"), "api": isActive("zivpn-api"), "bot": isActive("zivpn-bot")},
-		"server_time": time.Now().Format("2006-01-02 15:04:05"),
+		"public_ip":    pub,
+		"private_ip":   priv,
+		"domain":       domain,
+		"os":           osInfo,
+		"kernel":       kernel,
+		"cpu":          cpu,
+		"cores":        cores,
+		"ram":          ram,
+		"disk":         disk,
+		"uptime":       uptime,
+		"port":         "5667 UDP, 8080 API",
+		"service":      serviceStatus,
+		"server_time":  time.Now().Format("2006-01-02 15:04:05"),
 		"backup_count": backupCount,
+		"user_count":   userCount,
 	})
 }
 
@@ -423,16 +477,41 @@ func handleBackupHandler(w http.ResponseWriter, r *http.Request) {
 
 	_ = createZip(temp, files)
 
-	out, err := exec.Command("rclone", "copy", temp, RcloneRemote).CombinedOutput()
+	// Upload ke Google Drive
+	_, err := exec.Command("rclone", "copy", temp, RcloneRemote).CombinedOutput()
 	if err != nil {
-		jsonResponse(w, 500, false, string(out), nil)
+		jsonResponse(w, 500, false, "Upload failed", nil)
 		return
 	}
 
-	_ = os.Remove(temp)
+	// Ambil daftar file untuk mendapatkan FILE ID Google Drive
+	list, err := exec.Command("rclone", "lsjson", RcloneRemote).Output()
+	if err != nil {
+		jsonResponse(w, 500, false, "Failed reading drive list", nil)
+		return
+	}
+
+	var driveFiles []map[string]interface{}
+	json.Unmarshal(list, &driveFiles)
+
+	var fileID string
+	for _, f := range driveFiles {
+		if f["Name"] == filename {
+			if idStr, ok := f["ID"].(string); ok {
+				fileID = idStr
+			}
+		}
+	}
+
+	if fileID == "" {
+		jsonResponse(w, 500, false, "Unable to detect Google Drive file ID", nil)
+		return
+	}
+
+	os.Remove(temp)
 
 	jsonResponse(w, 200, true, "Backup success", map[string]string{
-		"backup_id": id,
+		"backup_id": fileID,
 		"filename":  filename,
 	})
 }
@@ -448,15 +527,22 @@ func listBackupsHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(out, &arr)
 
 	var res []map[string]interface{}
-	for _, x := range arr {
-		n, ok := x["Name"].(string)
-		if ok && strings.HasSuffix(n, ".zip") {
-			res = append(res, map[string]interface{}{
-				"id":       strings.TrimSuffix(n, ".zip"),
-				"filename": n,
-				"size":     x["Size"],
-			})
+	for _, f := range arr {
+		name, ok := f["Name"].(string)
+		if !ok || !strings.HasSuffix(name, ".zip") {
+			continue
 		}
+
+		fileID := ""
+		if idStr, ok := f["ID"].(string); ok {
+			fileID = idStr
+		}
+
+		res = append(res, map[string]interface{}{
+			"id":       fileID,  // FILE ID Google Drive
+			"filename": name,
+			"size":     f["Size"],
+		})
 	}
 
 	jsonResponse(w, 200, true, "OK", res)
@@ -471,29 +557,42 @@ func restoreHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	temp := "/tmp/" + req.BackupID + ".zip"
-	_, err := exec.Command("rclone", "copy", RcloneRemote+"/"+req.BackupID+".zip", "/tmp/").CombinedOutput()
+	tmp := "/tmp/restore.zip"
+
+	_, err := exec.Command(
+		"rclone",
+		"copy",
+		fmt.Sprintf("drive:%s", req.BackupID),
+		tmp,
+		"--drive-id", req.BackupID,
+	).CombinedOutput()
+
 	if err != nil {
 		jsonResponse(w, 500, false, "Copy failed", nil)
 		return
 	}
 
-	z, err := zip.OpenReader(temp)
+	z, err := zip.OpenReader(tmp)
 	if err != nil {
 		jsonResponse(w, 500, false, err.Error(), nil)
 		return
 	}
+	defer z.Close()
+
 	for _, f := range z.File {
 		dst := filepath.Join("/etc/zivpn", f.Name)
 		os.MkdirAll(filepath.Dir(dst), 0755)
+
 		rc, _ := f.Open()
 		out, _ := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode())
+
 		io.Copy(out, rc)
+
 		out.Close()
 		rc.Close()
 	}
-	z.Close()
-	_ = os.Remove(temp)
+
+	_ = os.Remove(tmp)
 	go restartAll()
 
 	jsonResponse(w, 200, true, "Restore done", nil)

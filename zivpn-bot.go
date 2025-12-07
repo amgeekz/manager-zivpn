@@ -55,7 +55,8 @@ func main() {
 	for update := range updates {
 		if update.Message != nil {
 			if update.Message.From.ID != cfg.AdminID {
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "[ZIVPN] >> ⛔ Akses Ditolak")
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "🚫 *AKSES DITOLAK*\n\n_Hanya admin yang dapat mengakses bot ini._")
+				msg.ParseMode = "Markdown"
 				bot.Send(msg)
 				continue
 			}
@@ -84,11 +85,11 @@ func handleMessage(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, adminID int64) {
 		case "restore":
 			userStates[msg.From.ID] = "restore_id"
 			tempUserData[msg.From.ID] = make(map[string]string)
-			sendMessageSimple(bot, msg.Chat.ID, "[ZIVPN] >> ♻ Masukkan ID Restore:")
+			sendMessageSimple(bot, msg.Chat.ID, "🔄 *RESTORE BACKUP*\n\nSilakan masukkan **ID Backup**:")
 		case "listbackup":
 			listBackups(bot, msg.Chat.ID)
 		default:
-			sendMessageSimple(bot, msg.Chat.ID, "[ZIVPN] >> Perintah tidak dikenal. Gunakan /menu")
+			sendMessageSimple(bot, msg.Chat.ID, "❌ *PERINTAH TIDAK DIKENAL*\n\nGunakan `/menu` untuk membuka menu utama.")
 		}
 	}
 }
@@ -100,7 +101,7 @@ func handleCallback(bot *tgbotapi.BotAPI, q *tgbotapi.CallbackQuery, adminID int
 	case data == "menu_create":
 		userStates[q.From.ID] = "create_username"
 		tempUserData[q.From.ID] = make(map[string]string)
-		sendMessageSimple(bot, q.Message.Chat.ID, "[ZIVPN] >> 👤 Masukkan Password:")
+		sendMessageSimple(bot, q.Message.Chat.ID, "👤 *BUAT AKUN BARU*\n\nSilakan masukkan **username** untuk akun baru:")
 	case data == "menu_trial":
 		createTrialUser(bot, q.Message.Chat.ID)
 	case data == "menu_delete":
@@ -120,7 +121,7 @@ func handleCallback(bot *tgbotapi.BotAPI, q *tgbotapi.CallbackQuery, adminID int
 	case data == "backup_restore":
 		userStates[q.From.ID] = "restore_id"
 		tempUserData[q.From.ID] = make(map[string]string)
-		sendMessageSimple(bot, q.Message.Chat.ID, "[ZIVPN] >> ♻ Masukkan ID Restore:")
+		sendMessageSimple(bot, q.Message.Chat.ID, "🔄 *RESTORE BACKUP*\n\nSilakan masukkan **ID Backup**:")
 	case data == "backup_auto":
 		toggleAutoBackup(bot, q.Message.Chat.ID)
 	case data == "cancel":
@@ -137,10 +138,10 @@ func handleCallback(bot *tgbotapi.BotAPI, q *tgbotapi.CallbackQuery, adminID int
 		username := strings.TrimPrefix(data, "select_renew:")
 		tempUserData[q.From.ID] = map[string]string{"username": username}
 		userStates[q.From.ID] = "renew_days"
-		sendMessageSimple(bot, q.Message.Chat.ID, fmt.Sprintf("[ZIVPN] >> 🔄 %s — Masukkan hari tambahan:", username))
+		sendMessageSimple(bot, q.Message.Chat.ID, fmt.Sprintf("🔄 *RENEW AKUN*\n\nUsername: `%s`\n\nMasukkan **jumlah hari** untuk diperpanjang:", username))
 	case strings.HasPrefix(data, "select_delete:"):
 		username := strings.TrimPrefix(data, "select_delete:")
-		msg := tgbotapi.NewMessage(q.Message.Chat.ID, fmt.Sprintf("[ZIVPN] >> ❓ Hapus `%s` ?", username))
+		msg := tgbotapi.NewMessage(q.Message.Chat.ID, fmt.Sprintf("🗑 *KONFIRMASI HAPUS*\n\nApakah Anda yakin ingin menghapus akun:\n\n`%s`", username))
 		msg.ParseMode = "Markdown"
 		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
@@ -165,11 +166,11 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 		}
 		tempUserData[uid]["username"] = text
 		userStates[uid] = "create_days"
-		sendMessageSimple(bot, msg.Chat.ID, "[ZIVPN] >> ⏳ Masukkan Durasi (hari):")
+		sendMessageSimple(bot, msg.Chat.ID, "⏳ *DURASI AKUN*\n\nMasukkan **jumlah hari** masa aktif akun:")
 	case "create_days":
 		days, err := strconv.Atoi(text)
 		if err != nil || days <= 0 {
-			sendMessageSimple(bot, msg.Chat.ID, "[ZIVPN] >> ❌ Durasi harus angka > 0")
+			sendMessageSimple(bot, msg.Chat.ID, "❌ *INPUT TIDAK VALID*\n\nDurasi harus berupa **angka lebih dari 0**.")
 			return
 		}
 		username := tempUserData[uid]["username"]
@@ -178,112 +179,163 @@ func handleState(bot *tgbotapi.BotAPI, msg *tgbotapi.Message, state string) {
 	case "renew_days":
 		days, err := strconv.Atoi(text)
 		if err != nil || days <= 0 {
-			sendMessageSimple(bot, msg.Chat.ID, "[ZIVPN] >> ❌ Durasi harus angka > 0")
+			sendMessageSimple(bot, msg.Chat.ID, "❌ *INPUT TIDAK VALID*\n\nDurasi harus berupa **angka lebih dari 0**.")
 			return
 		}
 		username := tempUserData[uid]["username"]
 		renewUser(bot, msg.Chat.ID, username, days)
 		resetState(uid)
 	case "restore_id":
-		restoreBackup(bot, msg.Chat.ID, text)
-		resetState(uid)
+	restoreBackup(bot, msg.Chat.ID, text)
+	resetState(uid)
 	default:
 		resetState(uid)
 	}
 }
 
 func createTrialUser(bot *tgbotapi.BotAPI, chatID int64) {
-	rand.Seed(time.Now().UnixNano())
 	username := fmt.Sprintf("TRIAL%d", 1000+rand.Intn(9000))
-	res, err := apiCall("POST", "/user/create", map[string]interface{}{"password": username, "days": 1})
+
+	res, err := apiCall("POST", "/user/create", map[string]interface{}{
+		"password": username,
+		"days":     1,
+	})
+
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT TRIAL*\nError: "+err.Error())
 		return
 	}
-	if success, ok := res["success"].(bool); ok && success {
+
+	if success, _ := res["success"].(bool); success {
 		data := res["data"].(map[string]interface{})
-		msg := fmt.Sprintf("[ZIVPN] >> ───── ACCOUNT TRIAL ─────\nPassword : %s\nDurasi   : 1 Hari\nDomain   : %s\nExpired  : %s\n─────────────────────────────", data["password"], data["domain"], data["expired"])
+
+		domain := fmt.Sprintf("%v", data["domain"])
+		if domain == "<nil>" || domain == "" {
+			domain = "Unknown"
+		}
+
+		msg := fmt.Sprintf(
+			"🎯 *AKUN TRIAL BERHASIL DIBUAT*\n\n"+
+				"▸ **Username**: `%s`\n"+
+				"▸ **Password**: `%s`\n"+
+				"▸ **Domain**: `%s`\n"+
+				"▸ **Masa Aktif**: 1 Hari\n"+
+				"▸ **Expired**: `%s`\n\n"+
+				"_Akun trial akan otomatis terhapus setelah expired._",
+			data["password"],
+			data["password"],
+			domain,
+			data["expired"],
+		)
+
 		reply := tgbotapi.NewMessage(chatID, msg)
 		reply.ParseMode = "Markdown"
-		deleteLastMessage(bot, chatID)
 		bot.Send(reply)
-		showMainMenu(bot, chatID)
+
 		return
 	}
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal membuat trial")
+	sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT TRIAL*")
 }
 
 func createBackup(bot *tgbotapi.BotAPI, chatID int64) {
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> 🔄 Membuat backup...")
+	sendMessageSimple(bot, chatID, "🔄 *MEMBUAT BACKUP...*\n\n_Sedang memproses, harap tunggu..._")
+
 	res, err := apiCall("POST", "/backup", nil)
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT BACKUP*\n\nError: "+err.Error())
 		return
 	}
+
 	if success, ok := res["success"].(bool); ok && success {
 		data := res["data"].(map[string]interface{})
-		msg := "[ZIVPN] >> 📦 BACKUP BERHASIL\n"
-		if id, ok := data["backup_id"].(string); ok {
-			msg += "ID: " + id + "\n"
-		}
-		if fn, ok := data["filename"].(string); ok {
-			msg += "File: " + fn + "\n"
-		}
+
+		backupID := fmt.Sprintf("%v", data["backup_id"])
+		filename := fmt.Sprintf("%v", data["filename"])
+
+		msg := fmt.Sprintf(
+			"✅ *BACKUP BERHASIL DIBUAT*\n\n"+
+				"▸ **Google Drive File ID**: `%s`\n"+
+				"▸ **Nama File**: `%s`\n\n"+
+				"_Gunakan File ID saat melakukan restore._",
+			backupID,
+			filename,
+		)
+
 		sendMessageSimple(bot, chatID, msg)
 		return
 	}
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal membuat backup")
+
+	sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT BACKUP*")
 }
 
 func listBackups(bot *tgbotapi.BotAPI, chatID int64) {
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> 🔄 Mengambil daftar backup...")
+	sendMessageSimple(bot, chatID, "📋 *MENGAMBIL DAFTAR BACKUP...*")
+
 	res, err := apiCall("GET", "/backup/list", nil)
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGAMBIL BACKUP*\n\nError: "+err.Error())
 		return
 	}
+
 	if success, ok := res["success"].(bool); ok && success {
 		arr, _ := res["data"].([]interface{})
 		if len(arr) == 0 {
-			sendMessageSimple(bot, chatID, "[ZIVPN] >> 📭 Tidak ada backup")
+			sendMessageSimple(bot, chatID, "📭 *TIDAK ADA BACKUP*\n\n_Belum ada backup yang tersedia._")
 			return
 		}
+
 		var b strings.Builder
-		b.WriteString("[ZIVPN] >> 📋 Daftar Backup\n")
+		b.WriteString("📦 *DAFTAR BACKUP (Google Drive)*\n\n")
+
 		for i, it := range arr {
-			if m, ok := it.(map[string]interface{}); ok {
-				id := fmt.Sprintf("%v", m["id"])
-				fn := fmt.Sprintf("%v", m["filename"])
-				b.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, id, fn))
-			}
+			m := it.(map[string]interface{})
+			id := fmt.Sprintf("%v", m["id"]) // sekarang ID = Google Drive File ID
+			file := fmt.Sprintf("%v", m["filename"])
+
+			b.WriteString(fmt.Sprintf(
+				"**%d.**\n"+
+					"▸ *File ID:* `%s`\n"+
+					"▸ *File:* `%s`\n\n",
+				i+1, id, file,
+			))
 		}
+
 		sendMessageSimple(bot, chatID, b.String())
 		return
 	}
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal mengambil daftar backup")
+
+	sendMessageSimple(bot, chatID, "❌ *GAGAL MENGAMBIL DAFTAR BACKUP*")
 }
 
 func restoreBackup(bot *tgbotapi.BotAPI, chatID int64, backupID string) {
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> 🔄 Restore: "+backupID)
-	payload := map[string]interface{}{"backup_id": backupID}
-	res, err := apiCall("POST", "/restore", payload)
+	sendMessageSimple(bot, chatID, 
+		fmt.Sprintf("🔄 *MEMPROSES RESTORE...*\n\nID Backup (Drive ID): `%s`", backupID))
+
+	res, err := apiCall("POST", "/restore", map[string]interface{}{
+		"backup_id": backupID,
+	})
+
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL RESTORE*\n\nError: "+err.Error())
 		return
 	}
-	if success, ok := res["success"].(bool); ok && success {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ✅ RESTORE BERHASIL")
+
+	if ok, _ := res["success"].(bool); ok {
+		sendMessageSimple(bot, chatID, 
+			"✅ *RESTORE BERHASIL*\n\n_Sistem berhasil direstore dari Google Drive._")
 		return
 	}
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal restore: "+fmt.Sprintf("%v", res["message"]))
+
+	sendMessageSimple(bot, chatID, 
+		"❌ *GAGAL RESTORE*\n\nPesan: "+fmt.Sprintf("%v", res["message"]))
 }
 
 func showBackupMenu(bot *tgbotapi.BotAPI, chatID int64) {
-	msg := tgbotapi.NewMessage(chatID, "[ZIVPN] >> 🔧 Backup Manager")
+	msg := tgbotapi.NewMessage(chatID, "💾 *BACKUP MANAGER*\n\n_Pilih opsi backup yang diinginkan:_")
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📦 Backup Sekarang", "backup_create"),
-			tgbotapi.NewInlineKeyboardButtonData("♻ Restore", "backup_restore"),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Restore", "backup_restore"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("⏰ Auto Backup", "backup_auto"),
@@ -293,31 +345,32 @@ func showBackupMenu(bot *tgbotapi.BotAPI, chatID int64) {
 			tgbotapi.NewInlineKeyboardButtonData("🏠 Menu Utama", "cancel"),
 		),
 	)
+	msg.ParseMode = "Markdown"
 	sendAndTrack(bot, msg)
 }
 
 func toggleAutoBackup(bot *tgbotapi.BotAPI, chatID int64) {
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> 🔄 Mengubah auto backup...")
+	sendMessageSimple(bot, chatID, "⚙️ *MENGUBAH SETTING AUTO BACKUP...*")
 	res, err := apiCall("POST", "/backup/auto", nil)
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGUBAH SETTING*\n\nError: "+err.Error())
 		return
 	}
 	if success, ok := res["success"].(bool); ok && success {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ✅ Auto backup toggled")
+		sendMessageSimple(bot, chatID, "✅ *AUTO BACKUP DIPERBARUI*")
 		return
 	}
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal toggle auto backup")
+	sendMessageSimple(bot, chatID, "❌ *GAGAL MENGUBAH SETTING AUTO BACKUP*")
 }
 
 func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action string) {
 	users, err := getUsers()
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal mengambil user: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGAMBIL USER*\n\nError: "+err.Error())
 		return
 	}
 	if len(users) == 0 {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> 📂 Tidak ada user")
+		sendMessageSimple(bot, chatID, "📭 *TIDAK ADA USER*\n\n_Belum ada user yang terdaftar._")
 		return
 	}
 	perPage := 8
@@ -354,8 +407,9 @@ func showUserSelection(bot *tgbotapi.BotAPI, chatID int64, page int, action stri
 		rows = append(rows, nav)
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")))
-	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("[ZIVPN] >> 📋 Pilih user untuk %s (Hal %d/%d):", strings.Title(action), page, totalPages))
+	msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("👥 *PILIH USER UNTUK %s*\n\nHalaman: **%d/%d**", strings.ToUpper(action), page, totalPages))
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	msg.ParseMode = "Markdown"
 	sendAndTrack(bot, msg)
 }
 
@@ -371,24 +425,26 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 			}
 		}
 	}
-	msgText := fmt.Sprintf("[ZIVPN] >> ─── ZIVPN CONTROL ───\nDomain : %s\n", domain)
+	msgText := fmt.Sprintf("🚀 *ZIVPN CONTROL PANEL*\n\n"+
+		"▸ **Domain**: `%s`\n", domain)
 	if ipInfo.City != "" {
-		msgText += fmt.Sprintf("City   : %s\nISP    : %s\n", ipInfo.City, ipInfo.Isp)
+		msgText += fmt.Sprintf("▸ **Lokasi**: %s\n▸ **ISP**: %s\n", ipInfo.City, ipInfo.Isp)
 	}
-	msgText += "────────────────────"
+	msgText += "\n_Pilih menu di bawah untuk melanjutkan:_"
 	msg := tgbotapi.NewMessage(chatID, msgText)
+	msg.ParseMode = "Markdown"
 	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("👤 Create", "menu_create"),
-			tgbotapi.NewInlineKeyboardButtonData("🎯 Trial", "menu_trial"),
+			tgbotapi.NewInlineKeyboardButtonData("👤 Buat Akun", "menu_create"),
+			tgbotapi.NewInlineKeyboardButtonData("🎯 Akun Trial", "menu_trial"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🗑 Delete", "menu_delete"),
-			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew", "menu_renew"),
+			tgbotapi.NewInlineKeyboardButtonData("🗑 Hapus Akun", "menu_delete"),
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Renew Akun", "menu_renew"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📋 List", "menu_list"),
-			tgbotapi.NewInlineKeyboardButtonData("📊 Info", "menu_info"),
+			tgbotapi.NewInlineKeyboardButtonData("📋 List User", "menu_list"),
+			tgbotapi.NewInlineKeyboardButtonData("📊 Info System", "menu_info"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("💾 Backup", "menu_backup"),
@@ -399,6 +455,7 @@ func showMainMenu(bot *tgbotapi.BotAPI, chatID int64) {
 
 func sendMessageSimple(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
 	if _, ok := userStates[chatID]; ok {
 		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("❌ Batal", "cancel")))
 	}
@@ -497,127 +554,176 @@ func getUsers() ([]map[string]interface{}, error) {
 }
 
 func listUsers(bot *tgbotapi.BotAPI, chatID int64) {
-    users, err := getUsers()
-    if err != nil {
-        sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal mengambil user: "+err.Error())
-        return
-    }
+	users, err := getUsers()
+	if err != nil {
+		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGAMBIL USER*\n\nError: "+err.Error())
+		return
+	}
 
-    if len(users) == 0 {
-        sendMessageSimple(bot, chatID, "[ZIVPN] >> 📂 Tidak ada user.")
-        return
-    }
+	if len(users) == 0 {
+		sendMessageSimple(bot, chatID, "📭 *TIDAK ADA USER*\n\n_Belum ada user yang terdaftar._")
+		return
+	}
 
-    var b strings.Builder
-    b.WriteString("[ZIVPN] >> 📋 *Daftar Users*\n\n")
+	var b strings.Builder
+	b.WriteString("📋 *DAFTAR USER AKTIF*\n\n")
 
-    for i, u := range users {
-        pass := fmt.Sprintf("%v", u["password"])
-        exp := fmt.Sprintf("%v", u["expired"])
-        status := fmt.Sprintf("%v", u["status"])
+	for i, u := range users {
+		pass := fmt.Sprintf("%v", u["password"])
+		exp := fmt.Sprintf("%v", u["expired"])
+		status := fmt.Sprintf("%v", u["status"])
 
-        icon := "🟢"
-        if status == "Expired" {
-            icon = "🔴"
-        }
+		icon := "🟢"
+		if status == "Expired" {
+			icon = "🔴"
+		}
 
-        b.WriteString(fmt.Sprintf("%d. %s `%s`\n    Expired: %s\n\n", i+1, icon, pass, exp))
-    }
+		b.WriteString(fmt.Sprintf("**%d.** %s `%s`\n   ▸ Expired: `%s`\n\n", i+1, icon, pass, exp))
+	}
 
-    msg := tgbotapi.NewMessage(chatID, b.String())
-    msg.ParseMode = "Markdown"
-    msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
-        tgbotapi.NewInlineKeyboardRow(
-            tgbotapi.NewInlineKeyboardButtonData("🔙 Kembali", "cancel"),
-        ),
-    )
+	msg := tgbotapi.NewMessage(chatID, b.String())
+	msg.ParseMode = "Markdown"
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔙 Kembali ke Menu", "cancel"),
+		),
+	)
 
-    sendAndTrack(bot, msg)
+	sendAndTrack(bot, msg)
 }
 
 func createUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> 🔐 Membuat akun...")
-	res, err := apiCall("POST", "/user/create", map[string]interface{}{"password": username, "days": days})
+	res, err := apiCall("POST", "/user/create", map[string]interface{}{
+		"password": username,
+		"days":     days,
+	})
+
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT AKUN*\nError: "+err.Error())
 		return
 	}
+
 	if ok, _ := res["success"].(bool); ok {
 		data := res["data"].(map[string]interface{})
-		msg := fmt.Sprintf("[ZIVPN] >> ─ ACCOUNT ─\nPassword: %v\nExpired : %v\nDomain  : %v", data["password"], data["expired"], data["domain"])
-		sendMessageSimple(bot, chatID, msg)
-		showMainMenu(bot, chatID)
+
+		domain := fmt.Sprintf("%v", data["domain"])
+		if domain == "<nil>" || domain == "" {
+			domain = "Unknown"
+		}
+
+		msg := fmt.Sprintf(
+			"✅ *AKUN BERHASIL DIBUAT*\n\n"+
+				"▸ **Username**: `%v`\n"+
+				"▸ **Password**: `%v`\n"+
+				"▸ **Domain**: `%s`\n"+
+				"▸ **Expired**: `%v`\n\n"+
+				"_Simpan informasi akun dengan baik._",
+			data["password"],
+			data["password"],
+			domain,
+			data["expired"],
+		)
+
+		reply := tgbotapi.NewMessage(chatID, msg)
+		reply.ParseMode = "Markdown"
+		bot.Send(reply)
+
 		return
 	}
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal: "+fmt.Sprintf("%v", res["message"]))
-	showMainMenu(bot, chatID)
+
+	sendMessageSimple(bot, chatID, "❌ *GAGAL MEMBUAT AKUN*: "+fmt.Sprintf("%v", res["message"]))
 }
 
 func deleteUser(bot *tgbotapi.BotAPI, chatID int64, username string) {
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> 🗑 Menghapus...")
+	sendMessageSimple(bot, chatID, "🗑 *MENGHAPUS AKUN...*\n\nUsername: `"+username+"`")
 	res, err := apiCall("POST", "/user/delete", map[string]interface{}{"password": username})
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL MENGHAPUS*\n\nError: "+err.Error())
 		return
 	}
 	if ok, _ := res["success"].(bool); ok {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ✅ Berhasil dihapus")
+		sendMessageSimple(bot, chatID, "✅ *AKUN BERHASIL DIHAPUS*\n\nUsername: `"+username+"`")
 		showMainMenu(bot, chatID)
 		return
 	}
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal: "+fmt.Sprintf("%v", res["message"]))
+	sendMessageSimple(bot, chatID, "❌ *GAGAL MENGHAPUS*\n\nPesan: "+fmt.Sprintf("%v", res["message"]))
 	showMainMenu(bot, chatID)
 }
 
 func renewUser(bot *tgbotapi.BotAPI, chatID int64, username string, days int) {
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> 🔄 Renewing...")
+	sendMessageSimple(bot, chatID, "🔄 *MEMPERPANJANG AKUN...*\n\nUsername: `"+username+"`")
 	res, err := apiCall("POST", "/user/renew", map[string]interface{}{"password": username, "days": days})
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
+		sendMessageSimple(bot, chatID, "❌ *GAGAL RENEW*\n\nError: "+err.Error())
 		return
 	}
 	if ok, _ := res["success"].(bool); ok {
 		data := res["data"].(map[string]interface{})
-		msg := fmt.Sprintf("[ZIVPN] >> ✅ Renewed\nPassword: %v\nExpired : %v", data["password"], data["expired"])
+		msg := fmt.Sprintf("✅ *AKUN BERHASIL DIPERPANJANG*\n\n"+
+			"▸ **Username**: `%v`\n"+
+			"▸ **Expired Baru**: `%v`\n\n"+
+			"_Akun telah diperpanjang selama %d hari._",
+			data["password"], data["expired"], days)
 		sendMessageSimple(bot, chatID, msg)
 		showMainMenu(bot, chatID)
 		return
 	}
-	sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal: "+fmt.Sprintf("%v", res["message"]))
+	sendMessageSimple(bot, chatID, "❌ *GAGAL RENEW*\n\nPesan: "+fmt.Sprintf("%v", res["message"]))
 	showMainMenu(bot, chatID)
 }
 
 func systemInfo(bot *tgbotapi.BotAPI, chatID int64) {
 	res, err := apiCall("GET", "/info", nil)
 	if err != nil {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Error API: "+err.Error())
-		return
-	}
-
-	if ok, _ := res["success"].(bool); !ok {
-		sendMessageSimple(bot, chatID, "[ZIVPN] >> ❌ Gagal mengambil system info")
+		sendMessageSimple(bot, chatID, "❌ Gagal mengambil info: "+err.Error())
 		return
 	}
 
 	data := res["data"].(map[string]interface{})
+	get := func(k string) string { return strings.TrimSpace(fmt.Sprintf("%v", data[k])) }
 
-	msg := "[ZIVPN] >> ─── SERVER INFORMATION ───\n"
-	msg += fmt.Sprintf("IP Public : %v\n", data["public_ip"])
-	msg += fmt.Sprintf("IP Local  : %v\n", data["private_ip"])
-	msg += fmt.Sprintf("Domain    : %v\n", data["domain"])
-	msg += fmt.Sprintf("OS        : %v\n", data["os"])
-	msg += fmt.Sprintf("Kernel    : %v\n", data["kernel"])
-	msg += fmt.Sprintf("CPU       : %v\n", data["cpu"])
-	msg += fmt.Sprintf("Cores     : %v\n", data["cores"])
-	msg += fmt.Sprintf("RAM       : %v\n", data["ram"])
-	msg += fmt.Sprintf("Disk      : %v\n", data["disk"])
-	msg += fmt.Sprintf("Port API  : %v\n", data["port"])
-	msg += fmt.Sprintf("Service   : %v\n", data["service"])
-	msg += fmt.Sprintf("Backups   : %v\n", data["backup_count"])
-	msg += "─────────────────────────────"
+	separator := "━━━━━━━━━━━━━━━━━━━━"
 
-	msgObj := tgbotapi.NewMessage(chatID, msg)
-	sendAndTrack(bot, msgObj)
+	msg := fmt.Sprintf(
+		"*🖥️ VPS INFORMATION*\n%s\n"+
+			"🌍 *IP Address* : `%s`\n"+
+			"🔗 *Domain*     : `%s`\n"+
+			"🧩 *OS*         : `%s`\n"+
+			"🧬 *Kernel*     : `%s`\n"+
+			"💠 *CPU*        : `%s`\n"+
+			"⚙️ *Cores*      : `%s`\n"+
+			"📦 *RAM*        : `%s`\n"+
+			"💽 *Disk*       : `%s`\n"+
+			"⏱ *Uptime*     : `%s`\n"+
+			"🛰 *Service*    : `%s`\n"+
+			"👥 *Active Users* : `%s`\n"+
+			"🗂 *Backups*    : `%s`\n"+
+			"⏰ *Server Time* : `%s`\n%s",
+		separator,
+		get("public_ip"),
+		get("domain"),
+		get("os"),
+		get("kernel"),
+		get("cpu"),
+		get("cores"),
+		get("ram"),
+		get("disk"),
+		get("uptime"),
+		get("service"),
+		get("user_count"),
+		get("backup_count"),
+		get("server_time"),
+		separator,
+	)
+
+	m := tgbotapi.NewMessage(chatID, msg)
+	m.ParseMode = "Markdown"
+	m.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔙 Kembali", "cancel"),
+		),
+	)
+	sendAndTrack(bot, m)
 }
 
 func loadConfig() (BotConfig, error) {
